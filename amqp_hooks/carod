@@ -300,15 +300,18 @@ def handle_get_work(req_socket, reply, amqp_queue, known_items, broker_connectio
          req_socket.send(pickle.dumps(reply, 2))
          close_socket(req_socket)
          raise general_exception(syslog.LOG_ERR, err_msg)
-      elif msg.get('message_properties').message_id == None:
-         err_msg = 'ERROR: Work Request does not have a unique message_id and is unusable.  Discarding'
+      elif msg.get('message_properties').message_id == None or \
+           msg.get('message_properties').message_id == '':
+         err_msg = 'Work Request does not have a unique message_id and is unusable'
          msg_props = msg.get('message_properties')
+         msg_props.application_headers['JobHookJobStatus'] = 'Discarded'
+         msg_props.application_headers['LLStatusReason'] = '"%s"' % err_msg
          reply.data = ''
          send_AMQP_msg(broker_connection, msg, msg_props, err_msg)
          broker_connection.message_accept(RangedSet(msg.id))
          req_socket.send(pickle.dumps(reply, 2))
          close_socket(req_socket)
-         raise general_exception(syslog.LOG_ERR, err_msg)
+         raise general_exception(syslog.LOG_ERR, 'ERROR: %s. Discarding' % err_msg)
 #      elif msg.properties.has_key('expiration') == True and msg['expiration'] > time.time():
 #      elif msg.expiration > time.time():
 #         print '%s: Message has expired and shouldn't be processed' % func_name
@@ -319,7 +322,6 @@ def handle_get_work(req_socket, reply, amqp_queue, known_items, broker_connectio
          reply.data += 'WF_REQ_SLOT = "' + slot + '"\n'
          if job_data.has_key('JobUniverse') == False:
             reply.data += 'JobUniverse = 5\n'
-#         reply.data += 'JobLeaseDuration = 500000\n'
 #         reply.data += 'JobLeaseDuration = 3\n'
          reply.data += 'IsFeatched = TRUE\n'
          for field in [header for header in job_data.keys() if header not in special]:
@@ -396,10 +398,22 @@ def handle_reply_fetch(msg, known_items, broker_connection, log):
             print '%s: Released global message lock for %s' % (func_name, str(message_id))
 
          # Set the JobStatus appropriately
+         addattrs = ''
          if msg.type == condor_wf_types.reply_claim_reject:
-            msg.data += 'JobStatus = 1'
+            addattrs = 'JobStatus = 1\n'
+            addattrs += 'LLStatus = Rejected\n'
+            addattrs += 'LLStatusReason = "%s rejected the job"\n' % os.uname()[1]
          else:
-            msg.data += 'JobStatus = 2'
+            addattrs = 'JobStatus = 2\n'
+            addattrs += 'LLStatus = Accepted\n'
+            addattrs += 'LLStatusReason = "%s accepted the job"\n' % os.uname()[1]
+
+         ad = ''
+         for line in msg.data.split('\n'):
+            if line == '-----':
+               ad += addattrs
+            ad += line + '\n'
+         msg.data = ad
 
          try:
             # Place the data into the appropriate headers for the
@@ -535,7 +549,9 @@ def handle_update_job_status(msg, known_items, broker_connection, log):
          known_items.unlock()
          if log == True:
             print '%s: Released global message lock for %s' % (func_name, str(message_id))
-         msg.data += 'JobStatus = 2'
+         msg.data += 'JobStatus = 2\n'
+         msg.data += 'LLStatus = Running\n'
+         msg.data += 'LLStatusReason = "The job is running on %s"\n' % os.uname()[1]
          try:
             # Place the data into the appropriate headers for the
             # results message.
@@ -594,9 +610,20 @@ def handle_exit(req_socket, msg, known_items, broker_connection, log):
 
       # Set the JobStatus
       if msg.type == condor_wf_types.exit_exit:
-         msg.data += 'JobStatus = 4'
+         msg.data += 'JobStatus = 4\n'
+         msg.data += 'LLStatus = Completed\n'
+         msg.data += 'LLStatusReason = "The job exited normally"\n'
       else:
-         msg.data += 'JobStatus = 1'
+         msg.data += 'JobStatus = 1\n'
+         if msg.type == condor_wf_types.exit_remove:
+            msg.data += 'LLStatus = Removed\n'
+            msg.data += 'LLStatusReason = "The job was removed"\n'
+         elif msg.type == condor_wf_types.exit_hold:
+            msg.data += 'LLStatus = Held\n'
+            msg.data += 'LLStatusReason = "The job was put on hold"\n'
+         elif msg.type == condor_wf_types.exit_evict:
+            msg.data += 'LLStatus = Evicted\n'
+            msg.data += 'LLStatusReason = "The job was evicted"\n'
 
       # Place the data into the appropriate headers for the
       # results message.

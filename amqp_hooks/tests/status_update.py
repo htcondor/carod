@@ -117,7 +117,7 @@ def main(argv=None):
    work_headers['Cmd'] = '"/bin/sleep"'
    work_headers['Arguments'] = '"10"'
    work_headers['Iwd'] = '"/tmp"'
-   work_headers['Owner'] = '"someone"'
+   work_headers['Owner'] = '"rrati"'
    work_headers['JobUniverse'] = 5
    message_props = session.message_properties(application_headers=work_headers)
    message_props.reply_to = session.reply_to(broker_info['exchange'], replyTo)
