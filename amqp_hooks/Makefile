@@ -2,62 +2,33 @@
 
 RPMBUILD_DIRS := BUILD BUILDROOT RPMS SOURCES SPECS SRPMS
 
-NAME := condor-job-hooks
-HOOKS_SPEC := ${NAME}.spec
-HOOKS_VERSION := $(shell grep -i version: "${HOOKS_SPEC}" | awk '{print $$2}')
-HOOKS_RELEASE := $(shell grep -i 'define rel' "${HOOKS_SPEC}" | awk '{print $$3}')
-HOOKS_SOURCE := ${NAME}-${HOOKS_VERSION}-${HOOKS_RELEASE}.tar.gz
-HOOKS_DIR := ${NAME}-${HOOKS_VERSION}
 NAME := condor-low-latency
-LOWLAT_SPEC := ${NAME}.spec
-LOWLAT_VERSION := $(shell grep -i version: "${LOWLAT_SPEC}" | awk '{print $$2}')
-LOWLAT_RELEASE := $(shell grep -i 'define rel' "${LOWLAT_SPEC}" | awk '{print $$3}')
-LOWLAT_SOURCE := ${NAME}-${LOWLAT_VERSION}-${LOWLAT_RELEASE}.tar.gz
-LOWLAT_DIR := ${NAME}-${LOWLAT_VERSION}
+SPEC := ${NAME}.spec
+VERSION := $(shell grep -i version: "${SPEC}" | awk '{print $$2}')
+RELEASE := $(shell grep -i 'define rel' "${SPEC}" | awk '{print $$3}')
+SOURCE := ${NAME}-${VERSION}-${RELEASE}.tar.gz
+DIR := ${NAME}-${VERSION}
 
-build: condor-job-hooks condor-low-latency
+build: condor-low-latency
 
-condor-job-hooks: SPECS/${HOOKS_SPEC} SOURCES/${HOOKS_SOURCE}
+condor-low-latency: SPECS/${SPEC} SOURCES/${SOURCE}
 	mkdir -p BUILD RPMS SRPMS
-	rpmbuild --define="_topdir ${PWD}" -ba SPECS/${HOOKS_SPEC}
+	rpmbuild --define="_topdir ${PWD}" -ba SPECS/${SPEC}
 
-condor-low-latency: SPECS/${LOWLAT_SPEC} SOURCES/${LOWLAT_SOURCE}
-	mkdir -p BUILD RPMS SRPMS
-	rpmbuild --define="_topdir ${PWD}" -ba SPECS/${LOWLAT_SPEC}
-
-SPECS/${HOOKS_SPEC}: ${HOOKS_SPEC}
+SPECS/${SPEC}: ${SPEC}
 	mkdir -p SPECS
-	cp -f ${HOOKS_SPEC} SPECS
+	cp -f ${SPEC} SPECS
 
-SPECS/${LOWLAT_SPEC}: ${LOWLAT_SPEC}
-	mkdir -p SPECS
-	cp -f ${LOWLAT_SPEC} SPECS
-
-SOURCES/${HOOKS_SOURCE}: hooks/functions.py hooks/hook_evict_claim.py \
-                         hooks/hook_fetch_work.py hooks/hook_job_exit.py \
-                         hooks/hook_prepare_job.py hooks/hook_reply_fetch.py \
-                         hooks/hook_update_job_status.py
+SOURCES/${SOURCE}: carod config/carod.conf
 	mkdir -p SOURCES
-	rm -rf ${HOOKS_DIR}
-	mkdir ${HOOKS_DIR}
-	mkdir ${HOOKS_DIR}/config
-	cp -f hooks/* ${HOOKS_DIR}
-	cp -f config/job-hooks.conf ${HOOKS_DIR}/config
-	cp -f LICENSE-2.0.txt ${HOOKS_DIR}
-	cp -f INSTALL.job-hooks ${HOOKS_DIR}/INSTALL
-	tar -cf ${HOOKS_SOURCE} ${HOOKS_DIR}
-	mv "${HOOKS_SOURCE}" SOURCES
-
-SOURCES/${LOWLAT_SOURCE}: carod config/carod.conf
-	mkdir -p SOURCES
-	rm -rf ${LOWLAT_DIR}
-	mkdir ${LOWLAT_DIR}
-	mkdir ${LOWLAT_DIR}/config
-	cp -f carod ${LOWLAT_DIR}
-	cp -f config/carod.conf ${LOWLAT_DIR}/config
-	cp -f LICENSE-2.0.txt INSTALL ${LOWLAT_DIR}
-	tar -cf ${LOWLAT_SOURCE} ${LOWLAT_DIR}
-	mv "${LOWLAT_SOURCE}" SOURCES
+	rm -rf ${DIR}
+	mkdir ${DIR}
+	mkdir ${DIR}/config
+	cp -f carod ${DIR}
+	cp -f config/carod.conf ${DIR}/config
+	cp -f LICENSE-2.0.txt INSTALL ${DIR}
+	tar -cf ${SOURCE} ${DIR}
+	mv "${SOURCE}" SOURCES
 
 clean:
-	rm -rf ${RPMBUILD_DIRS} ${HOOKS_DIR} ${LOWLAT_DIR}
+	rm -rf ${RPMBUILD_DIRS} ${DIR}
