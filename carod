@@ -19,22 +19,39 @@ import sys
 import os
 import time
 import qpid
-import syslog
+import logging
+import logging.handlers
 import re
 import threading
 import signal
 import zipfile
 import getopt
-from jobhooks.functions import *
+from condorutils.workfetch import *
+from condorutils.socketutil import *
+from condorutils.osutil import *
+from condorutils.readconfig import *
 from qpid.util import connect
 from qpid.connection import Connection
 from qpid.datatypes import Message, RangedSet, uuid4
 from qpid.queue import Empty
 from cStringIO import StringIO
 
-class exit_signal(Exception):
+
+class MainException(Exception):
+   def __init__(self, level, *msgs):
+      self.msgs = msgs
+      self.level = level
+
+
+class MsgException(Exception):
    def __init__(self, str):
       self.msg = str
+
+
+class ExitSignal(Exception):
+   def __init__(self, str):
+      self.msg = str
+
 
 class work_data(object):
    def __init__(self, msg, slot_num):
@@ -43,11 +60,13 @@ class work_data(object):
       self.__access_time__ = time.time()
       self.__access_lock__ = threading.Lock()
 
+
    def lock(self, wait=True):
       """Acquires the lock controlling access to the data in the object"""
       if wait == True:
          self.__access_time__ = time.time()
       return(self.__access_lock__.acquire(wait))
+
 
    def unlock(self, wait=True):
       """Releases the lock controlling access to the data in the object"""
@@ -55,9 +74,11 @@ class work_data(object):
          self.__access_time__ = time.time()
       self.__access_lock__.release()
 
+
    def __set_AMQP_msg__(self, msg):
       self.__access_time__ = time.time()
       self.__AMQP_msg__ = msg
+
 
    def __get_AMQP_msg__(self):
       self.__access_time__ = time.time()
@@ -65,9 +86,11 @@ class work_data(object):
 
    AMQP_msg = property(__get_AMQP_msg__, __set_AMQP_msg__)
 
+
    def __set_slot__(self, slot_num):
       self.__access_time__ = time.time()
       self.__slot__ = slot_num
+
 
    def __get_slot__(self):
       self.__access_time__ = time.time()
@@ -75,10 +98,12 @@ class work_data(object):
 
    slot = property(__get_slot__, __set_slot__)
 
+
    def __get_access_time__(self):
       return(self.__access_time__)
 
    access_time = property(__get_access_time__)
+
 
 class global_data(object):
    def __init__(self):
@@ -89,22 +114,26 @@ class global_data(object):
       self.__amqp_session__ = None
       self.__amqp_config__ = {}
 
+
    def lock(self, wait=True):
       """Acquires the lock controlling access to the stored data"""
       return(self.__access_lock__.acquire(wait))
+
 
    def unlock(self):
       """Releases the lock controlling access to the stored data"""
       self.__access_lock__.release()
 
+
    def add_work(self, key, AMQP_msg, slot):
-      """Add work information to list of known work items.  Raises a
-         general_exception if the key already exists"""
+      """Add work information to list of known work items.  Raises an
+         AddDataError if the key already exists"""
       work = work_data(AMQP_msg, slot)
       if self.__find_work__(key) == False:
          self.__work_list__.update({key:work})
       else:
-         raise general_exception(syslog.LOG_WARNING, 'Key %s already exists.' % key)
+         raise MsgException('Key %s already exists.' % key)
+
 
    def remove_work(self, key):
       """Remove work information from the list of known work items and
@@ -117,6 +146,7 @@ class global_data(object):
       else:
          return(None)
 
+
    def get_work(self, key):
       """Get work information from the list of known work items.  If the
          work with the given key doesn't exist, None is returned"""
@@ -125,6 +155,7 @@ class global_data(object):
          return(work)
       else:
          return(None)
+
 
    def slot_in_use(self, slot_num):
       """Returns True if the given slot is currently processing work,
@@ -136,47 +167,58 @@ class global_data(object):
             break
       return(result)
 
+
    def __find_work__(self, key):
       """Returns True if the desired key exists, False otherwise"""
       value = self.__work_list__.has_key(key)
       return(value)
+
 
    def values(self):
       """Returns a list of work_data objects which contains all known
          work information """
       return(self.__work_list__.values())
 
+
    def set_amqp_socket(self, sock):
       self.__amqp_socket__ = sock
+
 
    def get_amqp_socket(self):
       return(self.__amqp_socket__)
 
    amqp_socket = property(get_amqp_socket, set_amqp_socket)
 
+
    def set_amqp_con(self, con):
       self.__amqp_con__ = con
+
 
    def get_amqp_con(self):
       return(self.__amqp_con__)
 
    amqp_con = property(get_amqp_con, set_amqp_con)
 
+
    def set_amqp_session(self, session):
       self.__amqp_session__ = session
+
 
    def get_amqp_session(self):
       return(self.__amqp_session__)
 
    amqp_session = property(get_amqp_session, set_amqp_session)
 
+
    def set_amqp_config(self, config):
       self.__amqp_config__ = config
+
 
    def get_amqp_config(self):
       return(self.__amqp_config__)
 
    amqp_config = property(get_amqp_config, set_amqp_config)
+
 
 def shutdown_sockets(sock1, sock2, amqp_con, amqp_session):
    if sock1 != None:
@@ -215,32 +257,29 @@ def shutdown_sockets(sock1, sock2, amqp_con, amqp_session):
          pass
       amqp_session = None
 
-def lease_monitor(data, max_lease_time, interval, log):
+
+def lease_monitor(data, max_lease_time, interval, log_name):
    """Monitor all work for lease expiration.  If a lease expired, the work
       is released"""
    func_name = "lease_monitor"
    broker_connection = data.amqp_session
    while True:
       current_time = float(time.time())
-      if log == True:
-         print '%s: max_lease_time = %s' % (func_name, str(max_lease_time))
-         print '%s: Lease check started at %s' % (func_name, str(current_time))
-         print '%s: acquiring list lock' % func_name
+      log_messages(logging.DEBUG, log_name, '%s: max_lease_time = %s' % (func_name, str(max_lease_time)))
+      log_messages(logging.DEBUG, log_name, '%s: Lease check started' % (func_name))
+      log_messages(logging.DEBUG, log_name, '%s: acquiring list lock' % func_name)
       data.lock()
-      if log == True:
-         print '%s: acquired list lock' % func_name
+      log_messages(logging.DEBUG, log_name, '%s: acquired list lock' % func_name)
       for item in data.values():
-         if log == True:
-            print '%s: access time = %s' % (func_name, str(item.access_time))
-            print '%s: current time = %s' % (func_name, str(current_time))
+         log_messages(logging.DEBUG, log_name, '%s: access time = %s' % (func_name, str(item.access_time)))
+         log_messages(logging.DEBUG, log_name, '%s: current time = %s' % (func_name, str(current_time)))
          if item.lock(False) == True:
             if (float(item.access_time) + float(max_lease_time)) < current_time:
                # No other thread is accessing this item and the lease has
                # expired, so delete it from the list of known messages and
                # release the lock on the AMQP message
                msg_id = item.AMQP_msg.get('message_properties').message_id
-               if log == True:
-                  print '%s: Expiring %s' % (func_name, str(msg_id))
+               log_messages(logging.DEBUG, log_name, '%s: Expiring %s' % (func_name, str(msg_id)))
                data.remove_work(msg_id)
 
                # Release the message so it can be consumed by another process
@@ -251,12 +290,11 @@ def lease_monitor(data, max_lease_time, interval, log):
 
             item.unlock(False)
 
-      if log == True:
-         print '%s: releasing list lock' % func_name
+      log_messages(logging.DEBUG, log_name, '%s: releasing list lock' % func_name)
       data.unlock()
-      if log == True:
-         print '%s: released list lock' % func_name
+      log_messages(logging.DEBUG, log_name, '%s: released list lock' % func_name)
       time.sleep(int(interval))
+
 
 def parse_data_into_headers(data, session):
    """Takes a set of data and parses it into the application_headers in an
@@ -266,14 +304,15 @@ def parse_data_into_headers(data, session):
    for line in data.split('\n'):
       found = grep('^([^=]*)\s*=\s*(.*)$', line)
       if found != None and found[0] != None and found[1] != None:
-         key = found[0].rstrip().lstrip()
-         value = found[1].rstrip().lstrip()
+         key = found[0].strip()
+         value = found[1].strip()
          if grep('^\d+$', value) != None:
             value = int(value) 
          elif grep('^[\d\.]+$', value) != None:
             value = float(value)
          headers[key] = value
    return(session.message_properties(application_headers=headers))
+
 
 def send_AMQP_msg(sess, orig_req, msg_properties, config, data=None):
    """Sends send_msg to the reply_to queue in orig_req using the broker
@@ -294,7 +333,7 @@ def send_AMQP_msg(sess, orig_req, msg_properties, config, data=None):
          time.sleep(attempts * 10)
          try:
             connect_to_broker(config)
-         except general_exception:
+         except:
             pass
          sess = config.amqp_session
       except:
@@ -303,570 +342,533 @@ def send_AMQP_msg(sess, orig_req, msg_properties, config, data=None):
 
    if attempts >= 5:
       # Failed to send the results
-      raise general_exception(syslog.LOG_ERR, 'Failed to send AMQP message after %d attempts for job id %s' % (attempts, str(msg_properties.correlation_id)))
+      raise MsgException('Failed to send AMQP message after %d attempts for job id %s' % (attempts, str(msg_properties.correlation_id)))
+
 
 def exit_signal_handler(signum, frame):
-   raise exit_signal('Exit signal %s received' % signum)
+   raise ExitSignal('Exit signal %s received' % signum)
 
-def handle_get_work(req_socket, reply, amqp_queue, known_items, log):
+
+def handle_get_work(req_socket, reply, amqp_queue, known_items, log_name):
    """Retrieve a message from an AMQP queue and send it back to the
       requesting client"""
    func_name = "handle_get_work"
-   if log == True:
-      print '%s called at %s' % (func_name, str(time.localtime()))
+   log_messages(logging.DEBUG, log_name, '%s called' % func_name)
 
    # List of message headers that need special treatment
    special = ['Owner', 'HookKeyword']
 
    broker_connection = known_items.amqp_session
-   try:
-      # Figure out the SlotID that is requesting work, and don't get any
-      # more work if it is still processing work from a previous call
-      slots = grep('^SlotID\s*=\s*(.+)$', reply.data)
-      if slots == None:
-         syslog.syslog(syslog.LOG_ERR, '%s: Unable to determine SlotID for request.' % func_name)
-         return(FAILURE)
-      else:
-         slot = slots[0].rstrip().lstrip()
 
-      if log == True:
-         print '%s: Checking if slot %s is doing work' % (func_name, str(slot))
-         print '%s: Acquiring global message lock for slot check %s' % (func_name, str(slot))
-      known_items.lock()
-      if log == True:
-         print '%s: Acquired global message lock for slot check %s' % (func_name, str(slot))
-      if known_items.slot_in_use(slot) == True:
-         if log == True:
-            print '%s: slot %s is already doing work' % (func_name, str(slot))
-         reply.data = ''
-         req_socket.send(pickle.dumps(reply, 2))
-         close_socket(req_socket)
-         known_items.unlock()
-         if log == True:
-            print '%s: Released global message lock for slot check %s' % (func_name, str(slot))
-         return(SUCCESS)
+   # Figure out the SlotID that is requesting work, and don't get any
+   # more work if it is still processing work from a previous call
+   slots = grep('^SlotID\s*=\s*(.+)$', reply.data)
+   if slots == None:
+      log_messages(logging.ERROR, log_name, '%s: Unable to determine SlotID for request.' % func_name)
+      return(FAILURE)
+   else:
+      slot = slots[0].strip()
+
+   log_messages(logging.DEBUG, log_name, '%s: Checking if slot %s is doing work' % (func_name, str(slot)))
+   log_messages(logging.DEBUG, log_name, '%s: Acquiring global message lock for slot check %s' % (func_name, str(slot)))
+   known_items.lock()
+   log_messages(logging.DEBUG, log_name, '%s: Acquired global message lock for slot check %s' % (func_name, str(slot)))
+   if known_items.slot_in_use(slot) == True:
+      log_messages(logging.DEBUG, log_name, '%s: slot %s is already doing work' % (func_name, str(slot)))
+      reply.data = ''
+      req_socket.send(pickle.dumps(reply, 2))
+      close_socket(req_socket)
       known_items.unlock()
-      if log == True:
-         print '%s: slot %s is not doing work' % (func_name, str(slot))
-         print '%s: Released global message lock for slot check %s' % (func_name, str(slot))
+      log_messages(logging.DEBUG, log_name, '%s: Released global message lock for slot check %s' % (func_name, str(slot)))
+      return(SUCCESS)
+   known_items.unlock()
+   log_messages(logging.DEBUG, log_name, '%s: slot %s is not doing work' % (func_name, str(slot)))
+   log_messages(logging.DEBUG, log_name, '%s: Released global message lock for slot check %s' % (func_name, str(slot)))
 
-      # Get the work off the AMQP work queue if it exists
+   # Get the work off the AMQP work queue if it exists
+   try:
+      msg = amqp_queue.get(timeout=1)
+      job_data = msg.get('message_properties').application_headers
+   except qpid.session.Closed:
       try:
-         msg = amqp_queue.get(timeout=1)
-         job_data = msg.get('message_properties').application_headers
-      except qpid.session.Closed:
-         try:
-            connect_to_broker(known_items)
-         except general_exception:
-            pass
-         reply.data = ''
-         req_socket.send(pickle.dumps(reply, 2))
-         close_socket(req_socket)
-         return(SUCCESS)
-      except Empty:
-         reply.data = ''
-         req_socket.send(pickle.dumps(reply, 2))
-         close_socket(req_socket)
-         return(SUCCESS)
-      except:
-         if amqp_queue == None:
-            try:
-               connect_to_broker(known_items)
-            except general_exception:
-               pass
-         return(SUCCESS)
-
-      reply_to = msg.get('message_properties').reply_to
-      if reply_to == None or reply_to == '':
-         err_msg = 'ERROR: Work Request does not have a reply_to field and is unusable.  Discarding'
-         reply.data = ''
-         broker_connection.message_accept(RangedSet(msg.id))
-         req_socket.send(pickle.dumps(reply, 2))
-         close_socket(req_socket)
-         raise general_exception(syslog.LOG_ERR, err_msg)
-      elif msg.get('message_properties').message_id == None:
-         err_msg = 'ERROR: Work Request does not have a unique message_id and is unusable.  Discarding'
-         msg_props = msg.get('message_properties')
-         reply.data = ''
-         try:
-            send_AMQP_msg(broker_connection, msg, msg_props, known_items, err_msg)
-         except general_exception, error:
-            log_messages(error)
-         
-         try:
-            broker_connection.message_accept(RangedSet(msg.id))
-         except:
-            pass
-         req_socket.send(pickle.dumps(reply, 2))
-         close_socket(req_socket)
-         raise general_exception(syslog.LOG_ERR, err_msg)
-#      elif msg.properties.has_key('expiration') == True and msg['expiration'] > time.time():
-#      elif msg.expiration > time.time():
-#         print '%s: Message has expired and shouldn't be processed' % func_name
-      else:
-         # Create the ClassAd to send to the requesting client
-         msg_num = str(msg.get('message_properties').message_id)
-         reply.data = 'AMQPID = "%s"\n' % msg_num
-         reply.data += 'WF_REQ_SLOT = "%s"\n' % slot
-         if job_data.has_key('JobUniverse') == False:
-            reply.data += 'JobUniverse = 5\n'
-         reply.data += 'IsFeatched = TRUE\n'
-         for field in [header for header in job_data.keys() if header not in special]:
-            reply.data += field + ' = ' + str(job_data[field]) + '\n'
-         if job_data.has_key('Owner') == True and str(job_data['Owner']) != '':
-            reply.data += 'Owner = ' + str(job_data['Owner']) + '\n'
-         else:
-            reply.data += 'Owner = "nobody"\n'
-         reply.data += 'HookKeyword = "LOW_LATENCY_JOB"\n'
-
-         # Preserve the work data was processed so it can be
-         # acknowledged, expired, or released as needed
-         if log == True:
-            print '%s: Adding msg id %s to known items' % (func_name, msg_num)
-         known_items.lock()
-         try:
-            known_items.add_work(msg_num, msg, slot)
-         except general_exception, error:
-            known_items.unlock()
-            try:
-               broker_connection.message_release(RangedSet(msg.id))
-            except qpid.session.SessionDetached:
-               pass
-            raise general_exception(syslog.LOG_ERR, '%s: %s' % (func_name, error.msgs))
-         known_items.unlock()
-         if log == True:
-            print '%s: Released global message lock for %s' % (func_name, msg_num)
-   
-      # Send the work to the requesting client
+         connect_to_broker(known_items)
+      except MsgException, error:
+         log_messages(logging.INFO, log_name, *error.msgs)
+      reply.data = ''
       req_socket.send(pickle.dumps(reply, 2))
       close_socket(req_socket)
       return(SUCCESS)
+   except Empty:
+      reply.data = ''
+      req_socket.send(pickle.dumps(reply, 2))
+      close_socket(req_socket)
+      return(SUCCESS)
+   except:
+      if amqp_queue == None:
+         try:
+            connect_to_broker(known_items)
+         except MsgException, error:
+            log_messages(logging.INFO, log_name, error.msg)
+      return(SUCCESS)
 
-   except general_exception, error:
-      log_messages(error)
+   reply_to = msg.get('message_properties').reply_to
+   if reply_to == None or reply_to == '':
+      err_msg = 'ERROR: Work Request does not have a reply_to field and is unusable.  Discarding'
+      reply.data = ''
+      broker_connection.message_accept(RangedSet(msg.id))
+      req_socket.send(pickle.dumps(reply, 2))
+      close_socket(req_socket)
+      log_messages(logging.ERROR, log_name, err_msg)
       return(FAILURE)
+   elif msg.get('message_properties').message_id == None:
+      err_msg = 'Work Request does not have a unique message_id and is unusable.  Discarding'
+      msg_props = msg.get('message_properties')
+      reply.data = ''
+      try:
+         send_AMQP_msg(broker_connection, msg, msg_props, known_items, 'ERROR:' + err_msg)
+      except MsgException, error:
+         log_messages(logging.ERROR, log_name, error.msg)
+      
+      try:
+         broker_connection.message_accept(RangedSet(msg.id))
+      except:
+         pass
+      req_socket.send(pickle.dumps(reply, 2))
+      close_socket(req_socket)
+      log_messages(logging.ERROR, log_name, err_msg)
+      return(FAILURE)
+#   elif msg.properties.has_key('expiration') == True and msg['expiration'] > time.time():
+#   elif msg.expiration > time.time():
+#      print '%s: Message has expired and shouldn't be processed' % func_name
+   else:
+      # Create the ClassAd to send to the requesting client
+      msg_num = str(msg.get('message_properties').message_id)
+      reply.data = 'AMQPID = "%s"\n' % msg_num
+      reply.data += 'WF_REQ_SLOT = "%s"\n' % slot
+      if job_data.has_key('JobUniverse') == False:
+         reply.data += 'JobUniverse = 5\n'
+      reply.data += 'IsFeatched = TRUE\n'
+      for field in [header for header in job_data.keys() if header not in special]:
+         reply.data += field + ' = ' + str(job_data[field]) + '\n'
+      if job_data.has_key('Owner') == True and str(job_data['Owner']) != '':
+         reply.data += 'Owner = ' + str(job_data['Owner']) + '\n'
+      else:
+         reply.data += 'Owner = "nobody"\n'
+      reply.data += 'HookKeyword = "LOW_LATENCY_JOB"\n'
 
-def handle_reply_fetch(msg, known_items, log):
+      # Preserve the work data was processed so it can be
+      # acknowledged, expired, or released as needed
+      log_messages(logging.DEBUG, log_name, '%s: Adding msg id %s to known items' % (func_name, msg_num))
+      known_items.lock()
+      try:
+         known_items.add_work(msg_num, msg, slot)
+      except MsgException, error:
+         known_items.unlock()
+         try:
+            broker_connection.message_release(RangedSet(msg.id))
+         except qpid.session.SessionDetached:
+            pass
+         log_messages(logging.ERROR, log_name, '%s: %s' % (func_name, error.msg))
+         return(FAILURE)
+      known_items.unlock()
+      log_messages(logging.DEBUG, log_name, '%s: Released global message lock for %s' % (func_name, msg_num))
+
+   # Send the work to the requesting client
+   req_socket.send(pickle.dumps(reply, 2))
+   close_socket(req_socket)
+   return(SUCCESS)
+
+
+def handle_reply_fetch(msg, known_items, log_name):
    """Send the data from a reply claim hook to a results AMQP queue.  Release
       the lock on the receiving AMQP queue in the case of a reject"""
    func_name = "handle_reply_fetch"
-   if log == True:
-      print '%s called at %s' % (func_name, str(time.localtime()))
+   log_messages(logging.DEBUG, log_name, '%s called' % func_name)
 
    broker_connection = known_items.amqp_session
-   try:
-      # Find the AMQPID in the message received
-      message_ids = grep('^AMQPID\s*=\s*"(.+)"$', msg.data)
-      if message_ids == None:
-         raise general_exception(syslog.LOG_ERR, msg.data, '%s: Unable to find AMQPID in exit message' % func_name)
-      else:
-         message_id = message_ids[0].rstrip().lstrip()
 
-      if log == True:
-         print '%s: Acquiring global message lock for %s' % (func_name, str(message_id))
-      known_items.lock()
-      if log == True:
-         print '%s: Acquired global message lock for %s' % (func_name, str(message_id))
-      if msg.type == condor_wf_types.reply_claim_reject:
-         saved_work = known_items.remove_work(message_id)
-      else:
-         saved_work = known_items.get_work(message_id)
-
-      if saved_work == None:
-         # Couldn't find the AMQP message that corresponds to the AMQPID
-         # in the exit message.  This is bad and shouldn't happen.
-         known_items.unlock()
-         if log == True:
-            print '%s: Released global message lock for %s' % (func_name, str(message_id))
-         raise general_exception(syslog.LOG_ERR, '%s: Unable to find stored AMQP message with AMQPID "%s"' % (func_name, str(message_id)))
-      else:
-         if log == True:
-            print '%s: Acquiring lock for %s' % (func_name, str(message_id))
-         saved_work.lock()
-         if log == True:
-            print '%s: Acquired lock for %s' % (func_name, str(message_id))
-         known_items.unlock()
-         if log == True:
-            print '%s: Released global message lock for %s' % (func_name, str(message_id))
-
-         # Set the JobStatus appropriately
-         if msg.type == condor_wf_types.reply_claim_reject:
-            msg.data += 'JobStatus = 1'
-         else:
-            msg.data += 'JobStatus = 2'
-
-         try:
-            # Place the data into the appropriate headers for the
-            # results message.
-            msg_props = parse_data_into_headers(msg.data, broker_connection)
-
-            # Send the results to the appropriate exchange
-            send_AMQP_msg(broker_connection, saved_work.AMQP_msg, msg_props, known_items)
-         except:
-            saved_work.unlock()
-            raise general_exception(syslog.LOG_ERR, '%s: Unable to send reply messages for id "%s"' % (func_name, str(message_id)))
-
-         if msg.type == condor_wf_types.reply_claim_reject:
-            try:
-               broker_connection.message_release(RangedSet(saved_work.AMQP_msg.id))
-            except qpid.session.SessionDetached:
-               pass
-            if log == True:
-               print '%s: Work rejected %s' % (func_name, str(message_id))
-
-         if log == True:
-            print '%s: Releasing lock on %s' % (func_name, str(message_id))
-         saved_work.unlock()
-
-      return(SUCCESS)
-
-   except general_exception, error:
-      log_messages(error)
+   # Find the AMQPID in the message received
+   message_ids = grep('^AMQPID\s*=\s*"(.+)"$', msg.data)
+   if message_ids == None:
+      log_messages(logging.ERROR, log_name, msg.data, '%s: Unable to find AMQPID in exit message' % func_name)
       return(FAILURE)
+   else:
+      message_id = message_ids[0].strip()
 
-def handle_prepare_job(req_socket, reply, known_items, log):
+   log_messages(logging.DEBUG, log_name, '%s: Acquiring global message lock for %s' % (func_name, str(message_id)))
+   known_items.lock()
+   log_messages(logging.DEBUG, log_name, '%s: Acquired global message lock for %s' % (func_name, str(message_id)))
+   if msg.type == condor_wf_types.reply_claim_reject:
+      saved_work = known_items.remove_work(message_id)
+   else:
+      saved_work = known_items.get_work(message_id)
+
+   if saved_work == None:
+      # Couldn't find the AMQP message that corresponds to the AMQPID
+      # in the exit message.  This is bad and shouldn't happen.
+      known_items.unlock()
+      log_messages(logging.DEBUG, log_name, '%s: Released global message lock for %s' % (func_name, str(message_id)))
+      log_messages(logging.ERROR, log_name, '%s: Unable to find stored AMQP message with AMQPID "%s"' % (func_name, str(message_id)))
+      return(FAILURE)
+   else:
+      log_messages(logging.DEBUG, log_name, '%s: Acquiring lock for %s' % (func_name, str(message_id)))
+      saved_work.lock()
+      log_messages(logging.DEBUG, log_name, '%s: Acquired lock for %s' % (func_name, str(message_id)))
+      known_items.unlock()
+      log_messages(logging.DEBUG, log_name, '%s: Released global message lock for %s' % (func_name, str(message_id)))
+
+      # Set the JobStatus appropriately
+      if msg.type == condor_wf_types.reply_claim_reject:
+         msg.data += 'JobStatus = 1'
+      else:
+         msg.data += 'JobStatus = 2'
+
+      try:
+         # Place the data into the appropriate headers for the
+         # results message.
+         msg_props = parse_data_into_headers(msg.data, broker_connection)
+
+         # Send the results to the appropriate exchange
+         send_AMQP_msg(broker_connection, saved_work.AMQP_msg, msg_props, known_items)
+      except:
+         saved_work.unlock()
+         log_messages(logging.ERROR, log_name, '%s: Unable to send reply messages for id "%s"' % (func_name, str(message_id)))
+         return(FAILURE)
+
+      if msg.type == condor_wf_types.reply_claim_reject:
+         try:
+            broker_connection.message_release(RangedSet(saved_work.AMQP_msg.id))
+         except qpid.session.SessionDetached:
+            pass
+         log_messages(logging.DEBUG, log_name, '%s: Work rejected %s' % (func_name, str(message_id)))
+
+      log_messages(logging.DEBUG, log_name, '%s: Releasing lock on %s' % (func_name, str(message_id)))
+      saved_work.unlock()
+
+   return(SUCCESS)
+
+
+def handle_prepare_job(req_socket, reply, known_items, log_name):
    """Prepare the environment for the job.  This includes extracting any
       archived data sent with the job request, as well as running a
       presetup script if one exists."""
    func_name = "handle_prepare_job"
-   if log == True:
-      print '%s called at %s' % (func_name, str(time.localtime()))
+   log_messages(logging.DEBUG, log_name, '%s called' % func_name)
 
    broker_connection = known_items.amqp_session
-   try:
-      # Find the AMQPID in the message received
-      message_ids = grep('^AMQPID\s*=\s*"(.+)"$', reply.data)
-      if message_ids == None:
-         raise general_exception(syslog.LOG_ERR, reply.data, '%s: Unable to find AMQPID in prepare job message' % func_name)
-      else:
-         message_id = message_ids[0].rstrip().lstrip()
 
-      # Find the Current Working Directory  of the originating process
-      # in the message received
-      work_cwd = grep('^OriginatingCWD\s*=\s*"(.+)"$', reply.data)[0]
-
-      if log == True:
-         print '%s: Acquiring global message lock for %s' % (func_name, str(message_id))
-      known_items.lock()
-      if log == True:
-         print '%s: Acquired global message lock for %s' % (func_name, str(message_id))
-      saved_work = known_items.get_work(message_id)
-      if saved_work == None:
-         # Couldn't find the AMQP message that corresponds to the AMQPID
-         # in the exit message.  This is bad and shouldn't happen.
-         known_items.unlock()
-         if log == True:
-            print '%s: Released global message lock for %s' % (func_name, str(message_id))
-         raise general_exception(syslog.LOG_ERR, '%s: Unable to find stored AMQP message with AMQPID "%s"' % (func_name, str(message_id)))
-      else:
-         if log == True:
-            print '%s: Acquiring lock for %s' % (func_name, str(message_id))
-         saved_work.lock()
-         if log == True:
-            print '%s: Acquired lock for %s' % (func_name, str(message_id))
-         known_items.unlock()
-         if log == True:
-            print '%s: Released global message lock for %s' % (func_name, str(message_id))
-         try:
-            # Place the body of the message, which should contain an archived
-            # file, into the directory for the job
-            reply.data = ''
-            if saved_work.AMQP_msg.body != '' and \
-               saved_work.AMQP_msg.body != None:
-               # Write the message contents (which should be an archived
-               # file) to disk
-               input_filename = work_cwd + '/data.zip'
-               write_file(input_filename, saved_work.AMQP_msg.body)
-               reply.data = input_filename
-
-            # Send the information about the archive file to the requester
-            req_socket.send(pickle.dumps(reply, 2))
-            close_socket(req_socket)
-         except:
-            saved_work.unlock()
-            known_items.remove_work(message_id)
-            try:
-               broker_connection.message_release(RangedSet(saved_work.AMQP_msg.id))
-            except qpid.session.SessionDetached:
-               pass
-            raise general_exception(syslog.LOG_ERR, '%s: Error extracting message body contents for job id "%s"' % (func_name, str(message_id)))
-
-         if log == True:
-            print '%s: Releasing lock on %s' % (func_name, str(message_id))
-         saved_work.unlock()
-      return(SUCCESS)
-
-   except general_exception, error:
-      log_messages(error)
+   # Find the AMQPID in the message received
+   message_ids = grep('^AMQPID\s*=\s*"(.+)"$', reply.data)
+   if message_ids == None:
+      log_messages(logging.ERROR, log_name, reply.data, '%s: Unable to find AMQPID in prepare job message' % func_name)
       return(FAILURE)
+   else:
+      message_id = message_ids[0].strip()
 
-def handle_update_job_status(msg, known_items, log):
+   # Find the Current Working Directory  of the originating process
+   # in the message received
+   work_cwd = grep('^OriginatingCWD\s*=\s*"(.+)"$', reply.data)[0]
+
+   log_messages(logging.DEBUG, log_name, '%s: Acquiring global message lock for %s' % (func_name, str(message_id)))
+   known_items.lock()
+   log_messages(logging.DEBUG, log_name, '%s: Acquired global message lock for %s' % (func_name, str(message_id)))
+   saved_work = known_items.get_work(message_id)
+   if saved_work == None:
+      # Couldn't find the AMQP message that corresponds to the AMQPID
+      # in the exit message.  This is bad and shouldn't happen.
+      known_items.unlock()
+      log_messages(logging.DEBUG, log_name, '%s: Released global message lock for %s' % (func_name, str(message_id)))
+      log_messages(logging.ERROR, log_name, '%s: Unable to find stored AMQP message with AMQPID "%s"' % (func_name, str(message_id)))
+      return(FAILURE)
+   else:
+      log_messages(logging.DEBUG, log_name, '%s: Acquiring lock for %s' % (func_name, str(message_id)))
+      saved_work.lock()
+      log_messages(logging.DEBUG, log_name, '%s: Acquired lock for %s' % (func_name, str(message_id)))
+      known_items.unlock()
+      log_messages(logging.DEBUG, log_name, '%s: Released global message lock for %s' % (func_name, str(message_id)))
+      try:
+         # Place the body of the message, which should contain an archived
+         # file, into the directory for the job
+         reply.data = ''
+         if saved_work.AMQP_msg.body != '' and \
+            saved_work.AMQP_msg.body != None:
+            # Write the message contents (which should be an archived
+            # file) to disk
+            input_filename = work_cwd + '/data.zip'
+            write_file(input_filename, saved_work.AMQP_msg.body)
+            reply.data = input_filename
+
+         # Send the information about the archive file to the requester
+         req_socket.send(pickle.dumps(reply, 2))
+         close_socket(req_socket)
+      except:
+         saved_work.unlock()
+         known_items.remove_work(message_id)
+         try:
+            broker_connection.message_release(RangedSet(saved_work.AMQP_msg.id))
+         except qpid.session.SessionDetached:
+            pass
+         log_messages(logging.ERROR, log_name, '%s: Error extracting message body contents for job id "%s"' % (func_name, str(message_id)))
+         return(FAILURE)
+
+      log_messages(logging.DEBUG, log_name, '%s: Releasing lock on %s' % (func_name, str(message_id)))
+      saved_work.unlock()
+   return(SUCCESS)
+
+
+def handle_update_job_status(msg, known_items, log_name):
    """Send the job status update information to a results AMQP queue."""
    func_name = "handle_update_job_status"
-   if log == True:
-      print '%s called at %s' % (func_name, str(time.localtime()))
+   log_messages(logging.DEBUG, log_name, '%s called' % func_name)
 
    broker_connection = known_items.amqp_session
-   try:
-      # Find the AMQPID in the message received
-      message_ids = grep('^AMQPID\s*=\s*"(.+)"$', msg.data)
-      if message_ids == None:
-         raise general_exception(syslog.LOG_ERR, msg.data, '%s: Unable to find AMQPID in status message' % func_name)
-      else:
-         message_id = message_ids[0].rstrip().lstrip()
 
-      if log == True:
-         print '%s: Acquiring global message lock for %s' % (func_name, str(message_id))
-      known_items.lock()
-      if log == True:
-         print '%s: Acquired global message lock for %s' % (func_name, str(message_id))
-      saved_work = known_items.get_work(message_id)
-      if saved_work == None:
-         # Couldn't find the AMQP message that corresponds to the AMQPID
-         # in the status message.  This can occur if a job exits just after
-         # the status update has been invoked.  The OS determines which
-         # message will be sent first, and in the case where the exit
-         # message is sent before the status update we'll hit this condition.
-         # It's not an error as everything is working as it should.
-         known_items.unlock()
-         if log == True:
-            print '%s: Released global message lock for %s' % (func_name, str(message_id))
-            print'%s: Unable to find stored AMQP message with AMQPID "%s" (OK)' % (func_name, str(message_id))
-         return(SUCCESS)
-      else:
-         if log == True:
-            print '%s: Acquiring lock for %s' % (func_name, str(message_id))
-         saved_work.lock()
-         if log == True:
-            print '%s: Acquired lock for %s' % (func_name, str(message_id))
-         known_items.unlock()
-         if log == True:
-            print '%s: Released global message lock for %s' % (func_name, str(message_id))
-         msg.data += 'JobStatus = 2'
-         try:
-            # Place the data into the appropriate headers for the
-            # results message.
-            msg_props = parse_data_into_headers(msg.data, broker_connection)
-
-            # Send the results to the appropriate exchange
-            send_AMQP_msg(broker_connection, saved_work.AMQP_msg, msg_props, known_items)
-         except:
-            saved_work.unlock()
-            raise general_exception(syslog.LOG_ERR, '%s: Unable to send update message for id "%s"' % (func_name, str(message_id)))
-          
-         if log == True:
-            print '%s: Releasing lock on %s' % (func_name, str(message_id))
-         saved_work.unlock()
-      return(SUCCESS)
-
-   except general_exception, error:
-      log_messages(error)
+   # Find the AMQPID in the message received
+   message_ids = grep('^AMQPID\s*=\s*"(.+)"$', msg.data)
+   if message_ids == None:
+      log_messages(logging.ERROR, log_name, msg.data, '%s: Unable to find AMQPID in status message' % func_name)
       return(FAILURE)
+   else:
+      message_id = message_ids[0].strip()
 
-def handle_exit(req_socket, msg, known_items, log):
+   log_messages(logging.DEBUG, log_name, '%s: Acquiring global message lock for %s' % (func_name, str(message_id)))
+   known_items.lock()
+   log_messages(logging.DEBUG, log_name, '%s: Acquired global message lock for %s' % (func_name, str(message_id)))
+   saved_work = known_items.get_work(message_id)
+   if saved_work == None:
+      # Couldn't find the AMQP message that corresponds to the AMQPID
+      # in the status message.  This can occur if a job exits just after
+      # the status update has been invoked.  The OS determines which
+      # message will be sent first, and in the case where the exit
+      # message is sent before the status update we'll hit this condition.
+      # It's not an error as everything is working as it should.
+      known_items.unlock()
+      log_messages(logging.DEBUG, log_name, '%s: Released global message lock for %s' % (func_name, str(message_id)))
+      log_messages(logging.DEBUG, log_name, '%s: Unable to find stored AMQP message with AMQPID "%s" (OK)' % (func_name, str(message_id)))
+      return(SUCCESS)
+   else:
+      log_messages(logging.DEBUG, log_name, '%s: Acquiring lock for %s' % (func_name, str(message_id)))
+      saved_work.lock()
+      log_messages(logging.DEBUG, log_name, '%s: Acquired lock for %s' % (func_name, str(message_id)))
+      known_items.unlock()
+      log_messages(logging.DEBUG, log_name, '%s: Released global message lock for %s' % (func_name, str(message_id)))
+      msg.data += 'JobStatus = 2'
+      try:
+         # Place the data into the appropriate headers for the
+         # results message.
+         msg_props = parse_data_into_headers(msg.data, broker_connection)
+
+         # Send the results to the appropriate exchange
+         send_AMQP_msg(broker_connection, saved_work.AMQP_msg, msg_props, known_items)
+      except:
+         saved_work.unlock()
+         log_messages(logging.ERROR, log_name, '%s: Unable to send update message for id "%s"' % (func_name, str(message_id)))
+         return(FAILURE)
+       
+      log_messages(logging.DEBUG, log_name, '%s: Releasing lock on %s' % (func_name, str(message_id)))
+      saved_work.unlock()
+   return(SUCCESS)
+
+
+def handle_exit(req_socket, msg, known_items, log_name):
    """The job exited, so handle the reasoning appropriately.  If the
       job exited normally, then remove the work job from the AMQP queue,
       otherwise release the lock on the work.  Always place the results
       on the sender's reply_to AMQP queue"""
    func_name = "handle_exit"
-   if log == True:
-      print '%s called at %s' % (func_name, str(time.localtime()))
+   log_messages(logging.DEBUG, log_name, '%s called' % func_name)
 
    file_list = []
    broker_connection = known_items.amqp_session
 
-   try:
-      # Determine the slot that is reporting results
-      slots = grep ('^WF_REQ_SLOT\s*=\s*"(.+)"$', msg.data)
-      if slots == None:
-         syslog.syslog(syslog.LOG_WARNING, msg.data, 'Unable to determine SlotID for results.')
-      else:
-         # Verify the slot sending results is known to be in use.  If not,
-         # somehow results have been send from an unknown slot.
-         slot = slots[0]
-         known_items.lock()
-         if known_items.slot_in_use(slot) == False:
-            syslog.syslog(syslog.LOG_WARNING, 'Received exit message from unknown slot %s' % slot)
-         known_items.unlock()
-
-      # Find the AMQPID in the message we received
-      message_ids = grep('^AMQPID\s*=\s*"(.+)"$', msg.data)
-      if message_ids == None:
-         raise general_exception(syslog.LOG_ERR, msg.data, '%s: Unable to find AMQPID in exit message' % func_name)
-      else:
-         message_id = message_ids[0].rstrip().lstrip()
-
-      # Find the Current Working Directory of the originating process
-      # in the message received
-      work_cwd = grep('^OriginatingCWD\s*=\s*"(.+)"$', msg.data)[0]
-
-      # Set the JobStatus
-      if msg.type == condor_wf_types.exit_exit:
-         msg.data += 'JobStatus = 4'
-      else:
-         msg.data += 'JobStatus = 1'
-
-      # Place the data into the appropriate headers for the
-      # results message.
-      msg_props = parse_data_into_headers(msg.data, broker_connection)
-
-      # Retrieve the AMQP message from the list of known messages so it
-      # can be acknowledged or released
-      if log == True:
-         print '%s: Acquiring global message lock for %s' % (func_name, str(message_id))
+   # Determine the slot that is reporting results
+   slots = grep ('^WF_REQ_SLOT\s*=\s*"(.+)"$', msg.data)
+   if slots == None:
+      log_messages(logging.WARNING, log_name, msg.data, 'Unable to determine SlotID for results.')
+   else:
+      # Verify the slot sending results is known to be in use.  If not,
+      # somehow results have been send from an unknown slot.
+      slot = slots[0]
       known_items.lock()
-      if log == True:
-         print '%s: Acquired global message lock for %s' % (func_name, str(message_id))
-      saved_work = known_items.remove_work(message_id)
-      if saved_work == None:
-         # Couldn't find the AMQP message that corresponds to the AMQPID
-         # in the exit message.  This is bad and shouldn't happen.
-         known_items.unlock()
-         if log == True:
-            print '%s: Released global message lock for %s' % (func_name, str(message_id))
-         raise general_exception(syslog.LOG_ERR, '%s: Unable to find stored AMQP message with AMQPID "%s".  Message cannot be acknowledged nor results sent!' % (func_name, str(message_id)))
-      else:
-         if log == True:
-            print '%s: Acquiring lock for %s' % (func_name, str(message_id))
-         saved_work.lock()
-         if log == True:
-            print '%s: Acquired lock for %s' % (func_name, str(message_id))
-         known_items.unlock()
-         if log == True:
-            print '%s: Released global message lock for %s' % (func_name, str(message_id))
-         # If any files were specified to be retrieved side from
-         # what is created in the working directory, then create an archive
-         # of the files (if they exist) and place it in the body of the
-         # results message
-         ack_msg = saved_work.AMQP_msg
-         app_hdrs = ack_msg.get('message_properties').application_headers
-         data = None
+      if known_items.slot_in_use(slot) == False:
+         log_messages(logging.WARNING, log_name, 'Received exit message from unknown slot %s' % slot)
+      known_items.unlock()
 
-         # Generate the list of files to return
-         if os.path.exists(work_cwd) == False:
-            saved_work.unlock()
-            try:
-               broker_connection.message_release(RangedSet(ack_msg.id))
-            except qpid.session.SessionDetached:
-               pass
-            raise general_exception(syslog.LOG_ERR, '%s: Unable to change to exe dir "%s" for id "%s"' % (func_name, work_cwd, str(message_id)))
-               
+   # Find the AMQPID in the message we received
+   message_ids = grep('^AMQPID\s*=\s*"(.+)"$', msg.data)
+   if message_ids == None:
+      log_messages(logging.ERROR, log_name, msg.data, '%s: Unable to find AMQPID in exit message' % func_name)
+      return(FAILURE)
+   else:
+      message_id = message_ids[0].strip()
+
+   # Find the Current Working Directory of the originating process
+   # in the message received
+   work_cwd = grep('^OriginatingCWD\s*=\s*"(.+)"$', msg.data)[0]
+
+   # Set the JobStatus
+   if msg.type == condor_wf_types.exit_exit:
+      msg.data += 'JobStatus = 4'
+   else:
+      msg.data += 'JobStatus = 1'
+
+   # Place the data into the appropriate headers for the
+   # results message.
+   msg_props = parse_data_into_headers(msg.data, broker_connection)
+
+   # Retrieve the AMQP message from the list of known messages so it
+   # can be acknowledged or released
+   log_messages(logging.DEBUG, log_name, '%s: Acquiring global message lock for %s' % (func_name, str(message_id)))
+   known_items.lock()
+   log_messages(logging.DEBUG, log_name, '%s: Acquired global message lock for %s' % (func_name, str(message_id)))
+   saved_work = known_items.remove_work(message_id)
+   if saved_work == None:
+      # Couldn't find the AMQP message that corresponds to the AMQPID
+      # in the exit message.  This is bad and shouldn't happen.
+      known_items.unlock()
+      log_messages(logging.DEBUG, log_name, '%s: Released global message lock for %s' % (func_name, str(message_id)))
+      log_messages(logging.ERROR, log_name, '%s: Unable to find stored AMQP message with AMQPID "%s".  Message cannot be acknowledged nor results sent!' % (func_name, str(message_id)))
+      return(FAILURE)
+   else:
+      log_messages(logging.DEBUG, log_name, '%s: Acquiring lock for %s' % (func_name, str(message_id)))
+      saved_work.lock()
+      log_messages(logging.DEBUG, log_name, '%s: Acquired lock for %s' % (func_name, str(message_id)))
+      known_items.unlock()
+      log_messages(logging.DEBUG, log_name, '%s: Released global message lock for %s' % (func_name, str(message_id)))
+      # If any files were specified to be retrieved side from
+      # what is created in the working directory, then create an archive
+      # of the files (if they exist) and place it in the body of the
+      # results message
+      ack_msg = saved_work.AMQP_msg
+      app_hdrs = ack_msg.get('message_properties').application_headers
+      data = None
+
+      # Generate the list of files to return
+      if os.path.exists(work_cwd) == False:
+         saved_work.unlock()
          try:
-            os.chdir(work_cwd)
-            transfer_files = grep('^TransferOutput\s*=\s*"(.*)"$', msg.data)
-            if transfer_files != None and transfer_files[0] != None:
-               if os.path.exists('_condor_stderr') == True:
-                  file_list.append('_condor_stderr')
-               else:
-                  err_file = grep('^Err\s+=\s+"(.*)"$', msg.data)
-                  if err_file != None and err_file[0] != None:
-                     file_list.append(os.path.basename(err_file[0].rstrip()))
-               if os.path.exists('_condor_stdout') == True:
-                  file_list.append('_condor_stdout')
-               else:
-                  out_file = grep('^Out\s+=\s+"(.*)"$', msg.data)
-                  if out_file != None and out_file[0] != None:
-                     file_list.append(os.path.basename(out_file[0].rstrip()))
-               for file in transfer_files[0].split(','):
-                  if file not in file_list:
-                     file_list.append(os.path.basename(file.rstrip()))
+            broker_connection.message_release(RangedSet(ack_msg.id))
+         except qpid.session.SessionDetached:
+            pass
+         log_messages(logging.ERROR, log_name, '%s: Unable to change to exe dir "%s" for id "%s"' % (func_name, work_cwd, str(message_id)))
+         return(FAILURE)
+            
+      try:
+         os.chdir(work_cwd)
+         transfer_files = grep('^TransferOutput\s*=\s*"(.*)"$', msg.data)
+         if transfer_files != None and transfer_files[0] != None:
+            if os.path.exists('_condor_stderr') == True:
+               file_list.append('_condor_stderr')
             else:
-               file_list = os.listdir(".")
-         except:
-            saved_work.unlock()
-            try:
-               broker_connection.message_release(RangedSet(ack_msg.id))
-            except qpid.session.SessionDetached:
-               pass
-            raise general_exception(syslog.LOG_ERR, '%s: Failed to create list of files for results archive for id "%s"' % (func_name, str(message_id)))
-
-         # Create an archive of the files if they exist
-         filename = '%s/results.zip' % work_cwd
-         try:
-            zip = zipfile.ZipFile(filename, 'w')
-         except:
-            saved_work.unlock()
-            try:
-               broker_connection.message_release(RangedSet(ack_msg.id))
-            except qpid.session.SessionDetached:
-               pass
-            raise general_exception(syslog.LOG_ERR, '%s: Failed to open archive file for writing for id "%s"' % (func_name, str(message_id)))
-         
-         for result_file in file_list:
-            if os.path.exists(result_file) == True:
-               try:
-                  zip.write(result_file)
-               except:
-                  saved_work.unlock()
-                  try:
-                     broker_connection.message_release(RangedSet(ack_msg.id))
-                  except qpid.session.SessionDetached:
-                     pass
-                  raise general_exception(syslog.LOG_ERR, '%s: Failed to write "%s" to archive for id "%s"' % (func_name, result_file, str(message_id)))
-                  
-         try:
-            zip.close()
-            archived_file = open(filename, 'rb')
-            data = archived_file.read()
-            archived_file.close()
-            os.remove(filename)
-         except:
-            saved_work.unlock()
-            try:
-               broker_connection.message_release(RangedSet(ack_msg.id))
-            except qpid.session.SessionDetached:
-               pass
-            raise general_exception(syslog.LOG_ERR, '%s: Failed to write archive to disk for id "%s"' % (func_name, str(message_id)))
-
-         try:
-            # Send the results to the appropriate exchange
-            send_AMQP_msg(broker_connection, ack_msg, msg_props, known_items, data)
-         except general_exception, error:
-            saved_work.unlock()
-            try:
-               broker_connection.message_release(RangedSet(ack_msg.id))
-            except qpid.session.SessionDetached:
-               pass
-            raise general_exception(syslog.LOG_ERR, '%s: Unable to send exit message for id "%s": %s' % (func_name, str(message_id), error.msgs[0]))
-
-         try:
-            if msg.type == condor_wf_types.exit_exit:
-               # Job exited normally, so grab the result files, transfer the
-               # results to the specified AMQP reply_to queue, and ackowledge
-               # the message on the AMQP work queue
-               if log == True:
-                  print '%s: Normal exit' % func_name
-
-               # Acknowledge the message
-               broker_connection.message_accept(RangedSet(ack_msg.id))
+               err_file = grep('^Err\s+=\s+"(.*)"$', msg.data)
+               if err_file != None and err_file[0] != None:
+                  file_list.append(os.path.basename(err_file[0].strip()))
+            if os.path.exists('_condor_stdout') == True:
+               file_list.append('_condor_stdout')
             else:
-               # Job didn't exit normally, so release the lock for the message
-               if log == True:
-                  print '%s: Not normal exit: %s' % (func_name, str(msg.type))
+               out_file = grep('^Out\s+=\s+"(.*)"$', msg.data)
+               if out_file != None and out_file[0] != None:
+                  file_list.append(os.path.basename(out_file[0].strip()))
+            for file in transfer_files[0].split(','):
+               if file not in file_list:
+                  file_list.append(os.path.basename(file.strip()))
+         else:
+            file_list = os.listdir(".")
+      except:
+         saved_work.unlock()
+         try:
+            broker_connection.message_release(RangedSet(ack_msg.id))
+         except qpid.session.SessionDetached:
+            pass
+         log_messages(logging.ERROR, log_name, '%s: Failed to create list of files for results archive for id "%s"' % (func_name, str(message_id)))
+         return(FAILURE)
+
+      # Create an archive of the files if they exist
+      filename = '%s/results.zip' % work_cwd
+      try:
+         zip = zipfile.ZipFile(filename, 'w')
+      except:
+         saved_work.unlock()
+         try:
+            broker_connection.message_release(RangedSet(ack_msg.id))
+         except qpid.session.SessionDetached:
+            pass
+         log_messages(logging.ERROR, log_name, '%s: Failed to open archive file for writing for id "%s"' % (func_name, str(message_id)))
+         return(FAILURE)
+      
+      for result_file in file_list:
+         if os.path.exists(result_file) == True:
+            try:
+               zip.write(result_file)
+            except:
+               saved_work.unlock()
                try:
                   broker_connection.message_release(RangedSet(ack_msg.id))
                except qpid.session.SessionDetached:
                   pass
-         except:
-            saved_work.unlock()
+               log_messages(logging.ERROR, log_name, '%s: Failed to write "%s" to archive for id "%s"' % (func_name, result_file, str(message_id)))
+               return(FAILURE)
+               
+      try:
+         zip.close()
+         archived_file = open(filename, 'rb')
+         data = archived_file.read()
+         archived_file.close()
+         os.remove(filename)
+      except:
+         saved_work.unlock()
+         try:
+            broker_connection.message_release(RangedSet(ack_msg.id))
+         except qpid.session.SessionDetached:
+            pass
+         log_messages(logging.ERROR, log_name, '%s: Failed to write archive to disk for id "%s"' % (func_name, str(message_id)))
+         return(FAILURE)
+
+      try:
+         # Send the results to the appropriate exchange
+         send_AMQP_msg(broker_connection, ack_msg, msg_props, known_items, data)
+      except MsgException, error:
+         saved_work.unlock()
+         try:
+            broker_connection.message_release(RangedSet(ack_msg.id))
+         except qpid.session.SessionDetached:
+            pass
+         log_messages(logging.ERROR, log_name, '%s: Unable to send exit message for id "%s": %s' % (func_name, str(message_id), error.msg))
+         return(FAILURE)
+
+      try:
+         if msg.type == condor_wf_types.exit_exit:
+            # Job exited normally, so grab the result files, transfer the
+            # results to the specified AMQP reply_to queue, and ackowledge
+            # the message on the AMQP work queue
+            log_messages(logging.DEBUG, log_name, '%s: Normal exit' % func_name)
+
+            # Acknowledge the message
+            broker_connection.message_accept(RangedSet(ack_msg.id))
+         else:
+            # Job didn't exit normally, so release the lock for the message
+            log_messages(logging.DEBUG, log_name, '%s: Not normal exit: %s' % (func_name, str(msg.type)))
             try:
                broker_connection.message_release(RangedSet(ack_msg.id))
             except qpid.session.SessionDetached:
                pass
-            raise general_exception(syslog.LOG_ERR, '%s: Unable to remove/release id "%s" on the broker' % (func_name, str(message_id)))
-
-         if log == True:
-            print '%s: Releasing lock on %s' % (func_name, str(message_id))
+      except:
          saved_work.unlock()
+         try:
+            broker_connection.message_release(RangedSet(ack_msg.id))
+         except qpid.session.SessionDetached:
+            pass
+         log_messages(logging.ERROR, log_name, '%s: Unable to remove/release id "%s" on the broker' % (func_name, str(message_id)))
+         return(FAILURE)
 
-      # Send acknowledgement to the originator that exit work is complete
-      req_socket.send('Completed')
-      close_socket(req_socket)
-      return(SUCCESS)
+      log_messages(logging.DEBUG, log_name, '%s: Releasing lock on %s' % (func_name, str(message_id)))
+      saved_work.unlock()
 
-   except general_exception, error:
-      log_messages(error)
-      return(FAILURE)
+   # Send acknowledgement to the originator that exit work is complete
+   req_socket.send('Completed')
+   close_socket(req_socket)
+   return(SUCCESS)
+
 
 def connect_to_broker(data, config=None):
    if config != None:
@@ -885,9 +887,9 @@ def connect_to_broker(data, config=None):
    except qpid.session.SessionException, error:
       if connection != None:
          connection.close()
-      raise general_exception(syslog.LOG_ERR, 'Broker Connection Error %d: %s' % (error[0].error_code, error[0].description))
+      raise MsgException('Broker Connection Error %d: %s' % (error[0].error_code, error[0].description))
    except socket.error, error:
-      raise general_exception(syslog.LOG_ERR, 'socket error %d: %s' % (error[0], error[1]))
+      raise MsgException('socket error %d: %s' % (error[0], error[1]))
  
    session.message_flow(data.amqp_config['work_queue_name'], 0, 0xFFFFFFFF)
    session.message_flow(data.amqp_config['work_queue_name'], 1, 0xFFFFFFFF)
@@ -897,7 +899,11 @@ def connect_to_broker(data, config=None):
    data.amqp_con = connection
    data.amqp_session = session
 
+
 def main(argv=None):
+   if argv is None:
+      argv = sys.argv
+
    conf_file = '/etc/condor/carod.conf'
    dest = 'work_requests'
    session = None
@@ -906,18 +912,29 @@ def main(argv=None):
    sock = None
    pidfile = ''
    daemon_mode = 0
-
-   if argv is None:
-      argv = sys.argv
+   size = {}
+   log_name = os.path.basename(argv[0])
+   debug_logging = False
 
    try:
+      # Configure the logging system
+      try:
+         file = read_condor_config('LL_DAEMON', ['LOG'])
+      except ConfigError, error:
+         print 'Error: %s.  Exiting' % error.msg
+         return(FAILURE)
+
+      try:
+         size = read_condor_config('MAX_LL_DAEMON', ['LOG'])
+      except:
+         size['log'] = 1000000
+
       try:
          opts, args = getopt.getopt(argv[1:], 'dlhp:', ['daemon', 'logdebug', 'help', 'pidfile='])
       except getopt.GetoptError, error:
         print str(error)
         return(FAILURE)
 
-      debug_logging = False
       for option, arg in opts:
          if option in ('-d', '--daemon'):
             daemon_mode = 1
@@ -929,18 +946,40 @@ def main(argv=None):
          if option in ('-p', '--pidfile'):
             pidfile = arg
 
+      base_logger = logging.getLogger(log_name)
+      hndlr = logging.handlers.RotatingFileHandler(filename='%s' % file['log'],
+                                                   mode='a',
+                                                   maxBytes=int(size['log']),
+                                                   backupCount=1)
+      if debug_logging == True:
+         hndlr.setLevel(logging.DEBUG)
+         base_logger.setLevel(logging.DEBUG)
+      else:
+         hndlr.setLevel(logging.INFO)
+         base_logger.setLevel(logging.INFO)
+      fmtr = logging.Formatter('%(asctime)s %(levelname)s:%(message)s',
+                               '%m/%d %H:%M:%S')
+      hndlr.setFormatter(fmtr)
+      base_logger.addHandler(hndlr)
+
+      if debug_logging == True:
+         hndlr = logging.StreamHandler(sys.stderr)
+         hndlr.setLevel(logging.DEBUG)
+         hndlr.setFormatter(fmtr)
+         base_logger.addHandler(hndlr)
+
       if daemon_mode == 1:
          try:
             pid = os.fork()
          except OSError, error:
-            raise general_exception(syslog.LOG_ERR, "%s [%d]" % (error.strerror, error.errno))
+            raise MainException(logging.ERROR, "%s [%d]" % (error.strerror, error.errno))
          if pid == 0:
             # Child thread.  Fork again to create the daemon
             os.setsid()
             try:
                pid = os.fork()
             except OSError, error:
-               raise general_exception(syslog.LOG_ERR, "%s [%d]" % (error.strerror, error.errno))
+               raise MainException(logging.ERROR, "%s [%d]" % (error.strerror, error.errno))
             if pid == 0:
                os.chdir('/')
             else:
@@ -954,33 +993,30 @@ def main(argv=None):
          file.write('%s\n' % str(os.getpid()))
          file.close()
 
-      # Open a connection to the system logger
-      syslog.openlog(os.path.basename(argv[0]))
-
       # Set signal handlers
       signal.signal(signal.SIGINT, exit_signal_handler)
       signal.signal(signal.SIGTERM, exit_signal_handler)
 
       try:
          broker = read_condor_config('LL_BROKER', ['IP', 'PORT', 'QUEUE'])
-      except config_err, error:
-         syslog.syslog(syslog.LOG_INFO, *(error.msg))
-         syslog.syslog(syslog.LOG_INFO, 'Attempting to retrieve config from %s' % conf_file)
+      except ConfigError, error:
+         log_messages(logging.INFO, log_name, error.msg)
+         log_messages(logging.INFO, log_name, 'Attempting to retrieve config from %s' % conf_file)
          try:
             broker = read_config_file(conf_file, 'Broker')
-         except config_err, error:
-            raise general_exception(syslog.LOG_ERR, *(error.msg + ('Exiting.','')))
+         except ConfigError, error:
+            raise MainException(logging.ERROR, error.msg, 'Exiting.')
       broker['work_queue_name'] = dest
          
       try:
          server = read_condor_config('LL_DAEMON', ['IP', 'PORT', 'QUEUED_CONNECTIONS', 'LEASE_TIME', 'LEASE_CHECK_INTERVAL'])
-      except config_err, error:
-         syslog.syslog(syslog.LOG_INFO, *(error.msg))
-         syslog.syslog(syslog.LOG_INFO, 'Attempting to retrieve config from %s' % conf_file)
+      except ConfigError, error:
+         log_messages(logging.INFO, log_name, *(error.msg))
+         log_messages(logging.INFO, log_name, 'Attempting to retrieve config from %s' % conf_file)
          try:
             server = read_config_file(conf_file, 'Daemon')
-         except config_err, error:
-            raise general_exception(syslog.LOG_ERR, *(error.msg + ('Exiting.','')))
+         except ConfigError, error:
+            raise MainException(logging.ERROR, error.msg, 'Exiting.')
 
       # Create a container to share data between threads
       share_data = global_data()
@@ -988,14 +1024,14 @@ def main(argv=None):
       # Setup the AMQP connections
       try:
          connect_to_broker(share_data, broker)
-      except general_exception:
+      except MsgException:
          # Failure to connect at startup isn't a big deal.  Each attempt
          # to talk to the broker will establish a connection if one
          # isn't established already
          share_data.amqp_config['work_queue'] = None
 
       # Create a thread to monitor work expiration times
-      monitor_thread = threading.Thread(target=lease_monitor, args=(share_data, server['lease_time'], server['lease_check_interval'], debug_logging))
+      monitor_thread = threading.Thread(target=lease_monitor, args=(share_data, server['lease_time'], server['lease_check_interval'], log_name))
       monitor_thread.setDaemon(True)
       monitor_thread.start()
 
@@ -1006,49 +1042,54 @@ def main(argv=None):
          listen_socket.bind((server['ip'], int(server['port'])))
          listen_socket.listen(int(server['queued_connections']))
       except socket.error, error:
-         raise general_exception(syslog.LOG_ERR, 'socket error %d: %s' % (error[0], error[1]), 'Failed to listen on %s:%s' % (server['ip'], server['port']))
+         raise MainException(logging.ERROR, 'socket error %d: %s' % (error[0], error[1]), 'Failed to listen on %s:%s' % (server['ip'], server['port']))
 
       # Accept all incoming connections and act accordingly
       while True:
          sock,address = listen_socket.accept()
-         recv_data = socket_read_all(sock)
+         try:
+            recv_data = socket_read_all(sock)
+         except SocketError, error:
+            log_messages(logging.ERROR, log_name, error.msg)
+            continue
          condor_msg = pickle.loads(recv_data)
 
          # Set up a child thread to perform the desired action
          if condor_msg.type == condor_wf_types.get_work:
-            child = threading.Thread(target=handle_get_work, args=(sock, condor_msg, share_data.amqp_config['work_queue'], share_data, debug_logging))
+            child = threading.Thread(target=handle_get_work, args=(sock, condor_msg, share_data.amqp_config['work_queue'], share_data, log_name))
          elif condor_msg.type == condor_wf_types.reply_claim_accept or \
               condor_msg.type == condor_wf_types.reply_claim_reject:
-            child = threading.Thread(target=handle_reply_fetch, args=(condor_msg, share_data, debug_logging))
+            child = threading.Thread(target=handle_reply_fetch, args=(condor_msg, share_data, log_name))
          elif condor_msg.type == condor_wf_types.prepare_job:
-            child = threading.Thread(target=handle_prepare_job, args=(sock, condor_msg, share_data, debug_logging))
+            child = threading.Thread(target=handle_prepare_job, args=(sock, condor_msg, share_data, log_name))
          elif condor_msg.type == condor_wf_types.update_job_status:
-            child = threading.Thread(target=handle_update_job_status, args=(condor_msg, share_data, debug_logging))
+            child = threading.Thread(target=handle_update_job_status, args=(condor_msg, share_data, log_name))
          elif condor_msg.type == condor_wf_types.exit_exit or \
               condor_msg.type == condor_wf_types.exit_remove or \
               condor_msg.type == condor_wf_types.exit_hold or \
               condor_msg.type == condor_wf_types.exit_evict:
-            child = threading.Thread(target=handle_exit, args=(sock, condor_msg, share_data, debug_logging))
+            child = threading.Thread(target=handle_exit, args=(sock, condor_msg, share_data, log_name))
          else:
-            syslog.syslog(syslog.LOG_WARN, 'Received unknown request: %d' % condor_msg.type)
+            log_messages(logging.WARNING, log_name, 'Received unknown request: %d' % condor_msg.type)
             continue
          child.setDaemon(True)
          child.start()
 
-   except exit_signal, exit_data:
+   except ExitSignal, exit_data:
       # Close the session before exiting
       shutdown_sockets(listen_socket, sock, connection, session)
       if pidfile != '' and os.path.exists(pidfile) == True:
          os.remove(pidfile)
       return(SUCCESS)
 
-   except general_exception, error:
-      log_messages(error)
+   except MainException, error:
+      log_messages(error.level, log_name, *error.msgs)
       # Close the session before exiting
       shutdown_sockets(listen_socket, sock, connection, session)
       if pidfile != '' and os.path.exists(pidfile) == True:
          os.remove(pidfile)
       return(FAILURE)
+
 
 if __name__ == '__main__':
     sys.exit(main())

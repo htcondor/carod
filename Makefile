@@ -1,4 +1,4 @@
-.PHONY: build condor-job-hooks condor-low-latency
+.PHONY: build condor-low-latency
 
 RPMBUILD_DIRS := BUILD BUILDROOT RPMS SOURCES SPECS SRPMS
 
@@ -19,13 +19,11 @@ SPECS/${SPEC}: ${SPEC}
 	mkdir -p SPECS
 	cp -f ${SPEC} SPECS
 
-SOURCES/${SOURCE}: carod config/carod.conf
+SOURCES/${SOURCE}: carod
 	mkdir -p SOURCES
 	rm -rf ${DIR}
 	mkdir ${DIR}
-	mkdir ${DIR}/config
 	cp -f carod ${DIR}
-	cp -f config/carod.conf ${DIR}/config
 	cp -f LICENSE-2.0.txt INSTALL ${DIR}
 	tar -cf ${SOURCE} ${DIR}
 	mv "${SOURCE}" SOURCES

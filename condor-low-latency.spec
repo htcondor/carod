@@ -1,5 +1,5 @@
 %{!?is_fedora: %define is_fedora %(/bin/sh -c "if [ -e /etc/fedora-release ];then echo '1'; fi")}
-%define rel 21
+%define rel 21pre1
 
 Summary: Low Latency Scheduling
 Name: condor-low-latency
@@ -17,7 +17,7 @@ BuildArch: noarch
 Requires: python >= 2.3
 Requires: condor >= 7.0.2-4
 Requires: condor-job-hooks
-Requires: python-condor-job-hooks-common
+Requires: python-condorutils
 Requires: python-qpid
 
 %description
@@ -35,7 +35,6 @@ rm -rf %{buildroot}
 mkdir -p %{buildroot}%{_sbindir}
 mkdir -p %{buildroot}/%{_sysconfdir}/condor
 cp -f carod %{buildroot}/%_sbindir
-cp -f config/carod.conf %{buildroot}/%{_sysconfdir}/condor
 
 %post
 %if 0%{?is_fedora} == 0
@@ -52,7 +51,6 @@ rm -rf %{buildroot}
 %files
 %defattr(-,root,root,-)
 %doc LICENSE-2.0.txt INSTALL
-%config(noreplace) %_sysconfdir/condor/carod.conf
 %defattr(0755,root,root,-)
 %_sbindir/carod
 

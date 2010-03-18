@@ -39,7 +39,8 @@ from qpid.util import connect
 from qpid.datatypes import Message, RangedSet, uuid4
 from qpid.connection import Connection
 from qpid.queue import Empty
-from jobhooks.functions import *
+from condorutils.readconfig import *
+from condorutils.workfetch import *
 
 def dump_queue(binfo, queue_name, to):
    # Create a client and log in to it.
