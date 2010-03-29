@@ -1,9 +1,9 @@
 %{!?is_fedora: %define is_fedora %(/bin/sh -c "if [ -e /etc/fedora-release ];then echo '1'; fi")}
-%define rel 21
+%define rel 0.1
 
 Summary: Low Latency Scheduling
 Name: condor-low-latency
-Version: 1.0
+Version: 1.1
 Release: %{rel}%{?dist}
 License: ASL 2.0
 Group: Applications/System
@@ -55,6 +55,14 @@ rm -rf %{buildroot}
 %_sbindir/carod
 
 %changelog
+* Mon Mar 29 2010  <rrati@redhat> - 1.1-0.1
+- Removed packaged config file
+- Transitioned to condorutils module
+- Cleaned up exception handling, defined exceptions locally rather than
+  relying on jobhooks/condorutils module
+- Changed from syslog to logging module
+- Added new params to control logging
+
 * Fri Oct 23 2009  <rrati@redhat> - 1.0-21
 - Removed conflict with condor-ec2-enhanced
 
