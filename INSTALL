@@ -19,6 +19,8 @@ FetchWorkDelay = ifThenElse(State == "Claimed" && Activity == "Idle", 0, 10)
 STARTER_UPDATE_INTERVAL = 30
 
 LL_DAEMON = $(SBIN)/carod
+LL_DAEMON_LOG = $(LOG)/CaroLog
+MAX_LL_DAEMON_LOG = 1000000
 DAEMON_LIST = $(DAEMON_LIST), LL_DAEMON
 
 For more information on Condor/Grid hooks please see:
@@ -27,6 +29,14 @@ https://www.cs.wisc.edu/condor/manual/v7.1/4_4Job_Hooks.html
 The AMQP translation daemon (carod) will first look for its configuration
 in condor's configuration files.  The following parameters can be placed in
 a condor configuration file to configure carod:
+
+LL_DAEMON_LOG:
+   Type: String
+   Desc: The location of the file carod should use for logging
+
+MAX_LL_DAEMON_LOG:
+   Type: Integer
+   Desc: The maximum size of the carod log file before being rotated
 
 LL_BROKER_IP:
    Type: IP Address

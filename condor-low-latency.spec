@@ -1,5 +1,5 @@
 %{!?is_fedora: %define is_fedora %(/bin/sh -c "if [ -e /etc/fedora-release ];then echo '1'; fi")}
-%define rel 21pre1
+%define rel 21
 
 Summary: Low Latency Scheduling
 Name: condor-low-latency
