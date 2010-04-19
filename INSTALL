@@ -7,13 +7,11 @@ LOW_LATENCY_HOOK_FETCH_WORK = $(LIBEXEC)/hooks/hook_fetch_work.py
 LOW_LATENCY_HOOK_REPLY_FETCH = $(LIBEXEC)/hooks/hook_reply_fetch.py
 
 # Starter hooks
-LOW_LATENCY_HOOK_PREPARE_JOB = $(LIBEXEC)/hooks/hook_prepare_job.py
-LOW_LATENCY_HOOK_UPDATE_JOB_INFO = $(LIBEXEC)/hooks/hook_update_job_status.py
-LOW_LATENCY_HOOK_JOB_EXIT = $(LIBEXEC)/hooks/hook_job_exit.py
+LOW_LATENCY_JOB_HOOK_PREPARE_JOB = $(LIBEXEC)/hooks/hook_prepare_job.py
+LOW_LATENCY_JOB_HOOK_UPDATE_JOB_INFO = $(LIBEXEC)/hooks/hook_update_job_status.py
+LOW_LATENCY_JOB_HOOK_JOB_EXIT = $(LIBEXEC)/hooks/hook_job_exit.py
 
-SLOT1_JOB_HOOK_KEYWORD = LOW_LATENCY
 STARTD_JOB_HOOK_KEYWORD = LOW_LATENCY
-STARTER_JOB_HOOK_KEYWORD = LOW_LATENCY
 
 FetchWorkDelay = ifThenElse(State == "Claimed" && Activity == "Idle", 0, 10)
 STARTER_UPDATE_INTERVAL = 30
