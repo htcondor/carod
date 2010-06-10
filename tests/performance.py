@@ -39,6 +39,7 @@ from qpid.util import connect
 from qpid.datatypes import Message, RangedSet, uuid4
 from qpid.connection import Connection
 from qpid.queue import Empty
+from condorutils import SUCCESS, FAILURE
 from condorutils.readconfig import *
 from condorutils.workfetch import *
 

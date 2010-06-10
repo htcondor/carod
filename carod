@@ -354,7 +354,7 @@ def handle_get_work(req_socket, reply, amqp_queue, known_items, log_name):
    """Retrieve a message from an AMQP queue and send it back to the
       requesting client"""
    func_name = "handle_get_work"
-   log(logging.DEBUG, log_name, '%s called' % func_name)
+   log(logging.INFO, log_name, '%s called' % func_name)
 
    # List of message headers that need special treatment
    special = ['Owner', 'HookKeyword']
@@ -438,9 +438,6 @@ def handle_get_work(req_socket, reply, amqp_queue, known_items, log_name):
       close_socket(req_socket)
       log(logging.ERROR, log_name, err_msg)
       return(FAILURE)
-#   elif msg.properties.has_key('expiration') == True and msg['expiration'] > time.time():
-#   elif msg.expiration > time.time():
-#      print '%s: Message has expired and shouldn't be processed' % func_name
    else:
       # Create the ClassAd to send to the requesting client
       msg_num = str(msg.get('message_properties').message_id)
@@ -484,7 +481,7 @@ def handle_reply_fetch(msg, known_items, log_name):
    """Send the data from a reply claim hook to a results AMQP queue.  Release
       the lock on the receiving AMQP queue in the case of a reject"""
    func_name = "handle_reply_fetch"
-   log(logging.DEBUG, log_name, '%s called' % func_name)
+   log(logging.INFO, log_name, '%s called' % func_name)
 
    broker_connection = known_items.amqp_session
 
@@ -541,7 +538,9 @@ def handle_reply_fetch(msg, known_items, log_name):
             broker_connection.message_release(RangedSet(saved_work.AMQP_msg.id))
          except qpid.session.SessionDetached:
             pass
-         log(logging.DEBUG, log_name, '%s: Work rejected %s' % (func_name, str(message_id)))
+         log(logging.INFO, log_name, '%s: Work %s rejected' % (func_name, str(message_id)))
+      else:
+         log(logging.INFO, log_name, '%s: Work %s accepted' % (func_name, str(message_id)))
 
       log(logging.DEBUG, log_name, '%s: Releasing lock on %s' % (func_name, str(message_id)))
       saved_work.unlock()
@@ -554,7 +553,7 @@ def handle_prepare_job(req_socket, reply, known_items, log_name):
       archived data sent with the job request, as well as running a
       presetup script if one exists."""
    func_name = "handle_prepare_job"
-   log(logging.DEBUG, log_name, '%s called' % func_name)
+   log(logging.INFO, log_name, '%s called' % func_name)
 
    broker_connection = known_items.amqp_session
 
@@ -620,7 +619,7 @@ def handle_prepare_job(req_socket, reply, known_items, log_name):
 def handle_update_job_status(msg, known_items, log_name):
    """Send the job status update information to a results AMQP queue."""
    func_name = "handle_update_job_status"
-   log(logging.DEBUG, log_name, '%s called' % func_name)
+   log(logging.INFO, log_name, '%s called' % func_name)
 
    broker_connection = known_items.amqp_session
 
@@ -677,7 +676,7 @@ def handle_exit(req_socket, msg, known_items, log_name):
       otherwise release the lock on the work.  Always place the results
       on the sender's reply_to AMQP queue"""
    func_name = "handle_exit"
-   log(logging.DEBUG, log_name, '%s called' % func_name)
+   log(logging.INFO, log_name, '%s called' % func_name)
 
    file_list = []
    broker_connection = known_items.amqp_session
@@ -981,7 +980,11 @@ def main(argv=None):
       # Set signal handlers
       signal.signal(signal.SIGINT, exit_signal_handler)
       signal.signal(signal.SIGTERM, exit_signal_handler)
+      if os.name != 'nt' and os.name != 'ce':
+         # These aren't available on windows
+         signal.signal(signal.SIGQUIT, exit_signal_handler)
 
+      log(logging.INFO, log_name, 'Starting up')
       try:
          broker = read_condor_config('LL_BROKER', ['IP', 'PORT', 'QUEUE'])
       except ConfigError, error:
@@ -1009,10 +1012,11 @@ def main(argv=None):
       # Setup the AMQP connections
       try:
          connect_to_broker(share_data, broker)
-      except MsgException:
+      except MsgException, error:
          # Failure to connect at startup isn't a big deal.  Each attempt
          # to talk to the broker will establish a connection if one
          # isn't established already
+         log(logging.INFO, log_name, error.msg)
          share_data.amqp_config['work_queue'] = None
 
       # Create a thread to monitor work expiration times
@@ -1061,6 +1065,7 @@ def main(argv=None):
          child.start()
 
    except ExitSignal, exit_data:
+      log(logging.INFO, log_name, 'Exiting')
       # Close the session before exiting
       shutdown_sockets(listen_socket, sock, connection, session)
       if pidfile != '' and os.path.exists(pidfile) == True:
