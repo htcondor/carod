@@ -1,5 +1,5 @@
 %{!?is_fedora: %define is_fedora %(/bin/sh -c "if [ -e /etc/fedora-release ];then echo '1'; fi")}
-%define rel 0.1
+%define rel 0.2
 
 Summary: Low Latency Scheduling
 Name: condor-low-latency
@@ -55,6 +55,11 @@ rm -rf %{buildroot}
 %_sbindir/carod
 
 %changelog
+* Fri Jun 11 2010  <rrati@redhat> - 1.1-0.2
+- Catch SIGQUIT signal
+- More logging
+- Updated INSTALL doc
+
 * Mon Mar 29 2010  <rrati@redhat> - 1.1-0.1
 - Removed packaged config file
 - Transitioned to condorutils module
