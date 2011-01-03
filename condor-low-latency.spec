@@ -1,5 +1,5 @@
 %{!?is_fedora: %define is_fedora %(/bin/sh -c "if [ -e /etc/fedora-release ];then echo '1'; fi")}
-%define rel 0.2
+%define rel 1
 
 Summary: Low Latency Scheduling
 Name: condor-low-latency
@@ -7,10 +7,7 @@ Version: 1.1
 Release: %{rel}%{?dist}
 License: ASL 2.0
 Group: Applications/System
-URL: http://www.redhat.com/mrg
-# This is a Red Hat maintained package which is specific to
-# our distribution.  Thus the source is only available from
-# within this srpm.
+URL: http://git.fedorahosted.org/git/grid/carod.git
 Source0: %{name}-%{version}-%{rel}.tar.gz
 BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 BuildArch: noarch
@@ -55,6 +52,9 @@ rm -rf %{buildroot}
 %_sbindir/carod
 
 %changelog
+* Mon Jan  3 2011  <rrati@redhat> - 1.1-1
+- Updated source URL
+
 * Fri Jun 11 2010  <rrati@redhat> - 1.1-0.2
 - Catch SIGQUIT signal
 - More logging
