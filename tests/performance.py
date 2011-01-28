@@ -59,8 +59,8 @@ def dump_queue(binfo, queue_name, to):
 
    # Subscribe the local queue to the queue on the server
    child_session.message_subscribe(queue=queue_name, destination=dest, accept_mode=child_session.accept_mode.explicit)
-   child_session.message_flow(dest, child_session.credit_unit.message, 0xFFFFFFFF)
-   child_session.message_flow(dest, child_session.credit_unit.byte, 0xFFFFFFFF)
+   child_session.message_flow(dest, child_session.credit_unit.message, 0xFFFFFFFFL)
+   child_session.message_flow(dest, child_session.credit_unit.byte, 0xFFFFFFFFL)
 
    # Read responses as they come in and print to the screen.
    message = 0
@@ -95,8 +95,8 @@ def dump_queue(binfo, queue_name, to):
 #
 #         # Subscribe the local queue to the queue on the server
 #         child_session.message_subscribe(queue=queue_name, destination=dest, accept_mode=child_session.accept_mode.explicit)
-#         child_session.message_flow(dest, child_session.credit_unit.message, 0xFFFFFFFF)
-#         child_session.message_flow(dest, child_session.credit_unit.byte, 0xFFFFFFFF)
+#         child_session.message_flow(dest, child_session.credit_unit.message, 0xFFFFFFFFL)
+#         child_session.message_flow(dest, child_session.credit_unit.byte, 0xFFFFFFFFL)
       except:
          print 'Unexpected exception!'
          break

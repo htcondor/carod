@@ -93,8 +93,8 @@ def dump_queue(queue, ses, con, to, dest, broker):
 
          # Subscribe the local queue to the queue on the server
          ses.message_subscribe(queue=dest, destination=dest, accept_mode=ses.accept_mode.explicit)
-         ses.message_flow(dest, ses.credit_unit.message, 0xFFFFFFFF)
-         ses.message_flow(dest, ses.credit_unit.byte, 0xFFFFFFFF)
+         ses.message_flow(dest, ses.credit_unit.message, 0xFFFFFFFFL)
+         ses.message_flow(dest, ses.credit_unit.byte, 0xFFFFFFFFL)
       except:
          print 'Unexpected exception!'
          break
@@ -158,8 +158,8 @@ def main(argv=None):
 
    # Subscribe the local queue to the queue on the server
    session.message_subscribe(queue=replyTo, destination=dest, accept_mode=session.accept_mode.explicit)
-   session.message_flow(dest, session.credit_unit.message, 0xFFFFFFFF)
-   session.message_flow(dest, session.credit_unit.byte, 0xFFFFFFFF)
+   session.message_flow(dest, session.credit_unit.message, 0xFFFFFFFFL)
+   session.message_flow(dest, session.credit_unit.byte, 0xFFFFFFFFL)
 
    zip = zipfile.ZipFile('test.zip', 'w')
    zip.write('test_run.sh')

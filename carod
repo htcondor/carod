@@ -891,8 +891,8 @@ def connect_to_broker(data, config=None):
    except socket.error, error:
       raise MsgException('socket error %d: %s' % (error[0], error[1]))
  
-   session.message_flow(data.amqp_config['work_queue_name'], 0, 0xFFFFFFFF)
-   session.message_flow(data.amqp_config['work_queue_name'], 1, 0xFFFFFFFF)
+   session.message_flow(data.amqp_config['work_queue_name'], 0, 0xFFFFFFFFL)
+   session.message_flow(data.amqp_config['work_queue_name'], 1, 0xFFFFFFFFL)
    data.amqp_config['work_queue'] = session.incoming(data.amqp_config['work_queue_name'])
 
    data.amqp_socket = server_socket
