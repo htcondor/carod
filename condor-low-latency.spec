@@ -1,5 +1,5 @@
 %{!?is_fedora: %define is_fedora %(/bin/sh -c "if [ -e /etc/fedora-release ];then echo '1'; fi")}
-%define rel 1
+%define rel 2
 
 Summary: Low Latency Scheduling
 Name: condor-low-latency
@@ -52,6 +52,10 @@ rm -rf %{buildroot}
 %_sbindir/carod
 
 %changelog
+* Fri Jan 28 2011  <rrati@redhat> - 1.1-2
+- Fixed issue on python2.3 with setting unlimited message size when calling
+  message_flow
+
 * Mon Jan  3 2011  <rrati@redhat> - 1.1-1
 - Updated source URL
 
