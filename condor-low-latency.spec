@@ -1,5 +1,5 @@
 %{!?is_fedora: %define is_fedora %(/bin/sh -c "if [ -e /etc/fedora-release ];then echo '1'; fi")}
-%define rel 2
+%define rel 3
 
 Summary: Low Latency Scheduling
 Name: condor-low-latency
@@ -14,7 +14,7 @@ BuildArch: noarch
 Requires: python >= 2.3
 Requires: condor >= 7.0.2-4
 Requires: condor-job-hooks
-Requires: python-condorutils
+Requires: python-condorutils >= 1.5
 Requires: python-qpid
 
 %description
@@ -52,6 +52,10 @@ rm -rf %{buildroot}
 %_sbindir/carod
 
 %changelog
+* Tue Feb  8 2011  <rrati@redhat> - 1.1-3
+- Updated dep on python-condorutils
+- Updates for new read_condor_config
+
 * Fri Jan 28 2011  <rrati@redhat> - 1.1-2
 - Fixed issue on python2.3 with setting unlimited message size when calling
   message_flow
