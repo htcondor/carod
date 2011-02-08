@@ -925,7 +925,7 @@ def main(argv=None):
          return(FAILURE)
 
       try:
-         size = int(read_condor_config('MAX_LL_DAEMON', ['LOG'])['log'])
+         size = int(read_condor_config('', ['MAX_LL_DAEMON_LOG'])['max_ll_daemon_log'])
       except:
          size = 1000000
 
