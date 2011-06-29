@@ -31,7 +31,9 @@ using the AMQP protocol.
 rm -rf %{buildroot}
 mkdir -p %{buildroot}%{_sbindir}
 mkdir -p %{buildroot}/%{_sysconfdir}/condor
+mkdir -p %{_builddir}/%{name}-%{version}/example
 cp -f carod %{buildroot}/%_sbindir
+cp -f config/60condor-low-latency.config.example %{_builddir}/%{name}-%{version}/example
 
 %post
 %if 0%{?is_fedora} == 0
@@ -47,7 +49,7 @@ rm -rf %{buildroot}
 
 %files
 %defattr(-,root,root,-)
-%doc LICENSE-2.0.txt INSTALL
+%doc LICENSE-2.0.txt INSTALL example
 %defattr(0755,root,root,-)
 %_sbindir/carod
 

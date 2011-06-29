@@ -1,6 +1,6 @@
 Condor (>= 7.0.2-4) will need to be configured in order to use these job
 hooks (ie the low-latency feature).  To configure condor, add the following
-lines to your condor_config (default location: /etc/condor) file:
+lines to your configuration:
 
 # Startd hooks
 LOW_LATENCY_HOOK_FETCH_WORK = $(LIBEXEC)/hooks/hook_fetch_work.py
@@ -16,57 +16,67 @@ STARTD_JOB_HOOK_KEYWORD = LOW_LATENCY
 FetchWorkDelay = ifThenElse(State == "Claimed" && Activity == "Idle", 0, 10)
 STARTER_UPDATE_INTERVAL = 30
 
-LL_DAEMON = $(SBIN)/carod
-LL_DAEMON_LOG = $(LOG)/CaroLog
-MAX_LL_DAEMON_LOG = 1000000
-DAEMON_LIST = $(DAEMON_LIST), LL_DAEMON
+CAROD = $(SBIN)/carod
+CAROD_LOG = $(LOG)/CaroLog
+MAX_CAROD_LOG = 1000000
+CAROD_BROKER_IP = <broker ip>
+CAROD_BROKER_PORT = 5672
+CAROD_BROKER_QUEUE = grid
+CAROD_IP = 127.0.0.1
+CAROD_PORT = 10000
+CAROD_QUEUED_CONNECTIONS = 5
+CAROD_LEASE_TIME = 35
+CAROD_LEASE_CHECK_INTERVAL = 30
 
-For more information on Condor/Grid hooks please see:
-https://www.cs.wisc.edu/condor/manual/v7.1/4_4Job_Hooks.html
+DAEMON_LIST = $(DAEMON_LIST), CAROD
 
 The AMQP translation daemon (carod) will first look for its configuration
 in condor's configuration files.  The following parameters can be placed in
 a condor configuration file to configure carod:
 
-LL_DAEMON_LOG:
+CAROD:
+   Type: String
+   Desc: The carod binary
+
+CAROD_LOG:
    Type: String
    Desc: The location of the file carod should use for logging
 
-MAX_LL_DAEMON_LOG:
+MAX_CAROD_LOG:
    Type: Integer
    Desc: The maximum size of the carod log file before being rotated
 
-LL_BROKER_IP:
+CAROD_BROKER_IP:
    Type: IP Address
    Desc: The IP address of the broker that carod should talk to
 
-LL_BROKER_PORT:
+CAROD_BROKER_PORT:
    Type: Integer
-   Desc: The port on $(LL_BROKER_IP) the broker is listening to
+   Desc: The port on $(CAROD_BROKER_IP) the broker is listening to
 
-LL_BROKER_QUEUE:
+CAROD_BROKER_QUEUE:
    Type: String
    Desc: The queue on the broker for condor jobs
 
-LL_DAEMON_IP:
+CAROD_IP:
    Type: IP Address
    Desc: The IP address of the interface carod use for connections
 
-LL_DAEMON_PORT:
+CAROD_PORT:
    Type: Integer
    Desc: The port carod should use to listen for connections
 
-LL_DAEMON_QUEUED_CONNECTIONS:
+CAROD_QUEUED_CONNECTIONS:
    Type: Integer
    Desc: The number of allowed outstanding connections
 
-LL_DAEMON_LEASE_TIME:
+CAROD_LEASE_TIME:
    Type: Integer
    Desc: The maximum amount of time a job is allowed to run without providing
          an update.  This  must be larger than what is set for
          STARTER_UPDATE_INTERVAL.
 
-LL_DAEMON_LEASE_CHECK_INTERVAL:
+CAROD_LEASE_CHECK_INTERVAL:
    Type: Integer
    Desc: How often to check for lease expiration
 
@@ -74,11 +84,11 @@ If the configuration is not found in condor's configuration files, then
 carod will look in /etc/condor/carod.conf.
 
 Then edit the job hook configuration file to communicate with carod.
-See /usr/share/doc/condor-job-hooks-1.0/INSTALL for details.
+See /usr/share/doc/condor-job-hooks-<ver>/INSTALL for details.
 
 Once the configuration is complete, restart condor.
 
 To use the low-latency feature, configure condor as mention aboved, ensure
 qpid is running, and start carod.  To submit jobs, send AMQP messages to the
-AMQP queue defined in the /etc/condor/carod.conf configuration file, with
-the classad information stored as headers in the application_headers field.
+AMQP queue in the configuration file, with the classad information stored
+as headers in the application_headers field.

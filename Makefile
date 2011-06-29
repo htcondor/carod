@@ -19,12 +19,14 @@ SPECS/${SPEC}: ${SPEC}
 	mkdir -p SPECS
 	cp -f ${SPEC} SPECS
 
-SOURCES/${SOURCE}: carod
+SOURCES/${SOURCE}: carod config/60condor-low-latency.config.example
 	mkdir -p SOURCES
 	rm -rf ${DIR}
 	mkdir ${DIR}
+	mkdir ${DIR}/config
 	cp -f carod ${DIR}
 	cp -f LICENSE-2.0.txt INSTALL ${DIR}
+	cp -f config/60condor-low-latency.config.example ${DIR}/config
 	tar -cf ${SOURCE} ${DIR}
 	mv "${SOURCE}" SOURCES
 

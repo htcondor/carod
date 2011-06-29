@@ -488,7 +488,7 @@ def handle_reply_fetch(msg, known_items, log_name):
    # Find the AMQPID in the message received
    message_ids = grep('^AMQPID\s*=\s*"(.+)"$', msg.data)
    if message_ids == None:
-      log(logging.ERROR, log_name, msg.data, '%s: Unable to find AMQPID in exit message' % func_name)
+      log(logging.ERROR, log_name, msg.data, '%s: Unable to find AMQPID in reply message' % func_name)
       return(FAILURE)
    else:
       message_id = message_ids[0].strip()
@@ -919,15 +919,21 @@ def main(argv=None):
    try:
       # Configure the logging system
       try:
-         file = read_condor_config('LL_DAEMON', ['LOG'])
+         file = read_condor_config('CAROD', ['LOG'])
       except ConfigError, error:
-         print 'Error: %s.  Exiting' % error.msg
-         return(FAILURE)
+         try:
+            file = read_condor_config('LL_DAEMON', ['LOG'])
+         except:
+            print 'Error: %s.  Exiting' % error.msg
+            return(FAILURE)
 
       try:
-         size = int(read_condor_config('', ['MAX_LL_DAEMON_LOG'])['max_ll_daemon_log'])
+         size = int(read_condor_config('', ['MAX_CAROD_LOG'])['max_carod_log'])
       except:
-         size = 1000000
+         try:
+            size = int(read_condor_config('', ['MAX_LL_DAEMON_LOG'])['max_ll_daemon_log'])
+         except:
+            size = 1000000
 
       try:
          opts, args = getopt.getopt(argv[1:], 'dlhp:', ['daemon', 'logdebug', 'help', 'pidfile='])
@@ -986,25 +992,35 @@ def main(argv=None):
 
       log(logging.INFO, log_name, 'Starting up')
       try:
-         broker = read_condor_config('LL_BROKER', ['IP', 'PORT', 'QUEUE'])
+         broker = read_condor_config('CAROD', ['BROKER_IP', 'BROKER_PORT', 'BROKER_QUEUE'])
+         # Move values into legacy locations
+         broker['ip'] = broker['broker_ip']
+         broker['port'] = broker['broker_port']
+         broker['queue'] = broker['broker_queue']
       except ConfigError, error:
-         log(logging.INFO, log_name, error.msg)
-         log(logging.INFO, log_name, 'Attempting to retrieve config from %s' % conf_file)
          try:
-            broker = read_config_file(conf_file, 'Broker')
-         except ConfigError, error:
-            raise MainException(logging.ERROR, error.msg, 'Exiting.')
+            broker = read_condor_config('LL_BROKER', ['IP', 'PORT', 'QUEUE'])
+         except:
+            log(logging.INFO, log_name, error.msg)
+            log(logging.INFO, log_name, 'Attempting to retrieve config from %s' % conf_file)
+            try:
+               broker = read_config_file(conf_file, 'Broker')
+            except ConfigError, error:
+               raise MainException(logging.ERROR, error.msg, 'Exiting.')
       broker['work_queue_name'] = dest
          
       try:
-         server = read_condor_config('LL_DAEMON', ['IP', 'PORT', 'QUEUED_CONNECTIONS', 'LEASE_TIME', 'LEASE_CHECK_INTERVAL'])
+         server = read_condor_config('CAROD', ['IP', 'PORT', 'QUEUED_CONNECTIONS', 'LEASE_TIME', 'LEASE_CHECK_INTERVAL'])
       except ConfigError, error:
-         log(logging.INFO, log_name, *(error.msg))
-         log(logging.INFO, log_name, 'Attempting to retrieve config from %s' % conf_file)
          try:
-            server = read_config_file(conf_file, 'Daemon')
-         except ConfigError, error:
-            raise MainException(logging.ERROR, error.msg, 'Exiting.')
+            server = read_condor_config('LL_DAEMON', ['IP', 'PORT', 'QUEUED_CONNECTIONS', 'LEASE_TIME', 'LEASE_CHECK_INTERVAL'])
+         except:
+            log(logging.INFO, log_name, *(error.msg))
+            log(logging.INFO, log_name, 'Attempting to retrieve config from %s' % conf_file)
+            try:
+               server = read_config_file(conf_file, 'Daemon')
+            except ConfigError, error:
+               raise MainException(logging.ERROR, error.msg, 'Exiting.')
 
       # Create a container to share data between threads
       share_data = global_data()
