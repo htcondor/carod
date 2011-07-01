@@ -29,3 +29,5 @@ LOW_LATENCY_JOB_HOOK_UPDATE_JOB_INFO = $(LIBEXEC)/hooks/hook_update_job_status.p
 LOW_LATENCY_JOB_HOOK_JOB_EXIT = $(LIBEXEC)/hooks/hook_job_exit.py
 
 STARTD_JOB_HOOK_KEYWORD = LOW_LATENCY
+FetchWorkDelay = ifThenElse(State == "Claimed" && Activity == "Idle", 0, 10)
+STARTER_UPDATE_INTERVAL = 30

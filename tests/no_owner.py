@@ -130,7 +130,10 @@ def main(argv=None):
 
    # Retrieve the carod config for broker info
    try:
-      broker_info = read_condor_config('LL_BROKER', ['IP', 'PORT', 'QUEUE'])
+      broker_info = read_condor_config('CAROD', ['BROKER_IP', 'BROKER_PORT', 'BROKER_QUEUE'])
+      broker_info['ip'] = broker_info['broker_ip']
+      broker_info['port'] = broker_info['broker_port']
+      broker_info['queue'] = broker_info['broker_queue']
    except config_err, error:
       print '%s' % error.msg
       print 'Attempting to retrieve config from %s' % conf_file
