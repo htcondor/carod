@@ -1,9 +1,9 @@
 %{!?is_fedora: %define is_fedora %(/bin/sh -c "if [ -e /etc/fedora-release ];then echo '1'; fi")}
-%define rel 3
+%define rel 1
 
 Summary: Low Latency Scheduling
 Name: condor-low-latency
-Version: 1.1
+Version: 1.2
 Release: %{rel}%{?dist}
 License: ASL 2.0
 Group: Applications/System
@@ -54,6 +54,14 @@ rm -rf %{buildroot}
 %_sbindir/carod
 
 %changelog
+* Fri Jul  1 2011  <rrati@redhat> - 1.2-1
+- Change config param names:
+  LL_DAEMON -> CAROD
+  LL_BROKER -> CAROD_BROKER
+- Fixed issues with message expiration
+- Updated docs
+- Provided example configuration file
+
 * Tue Feb  8 2011  <rrati@redhat> - 1.1-3
 - Updated dep on python-condorutils
 - Updates for new read_condor_config
