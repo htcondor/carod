@@ -134,12 +134,12 @@ def main(argv=None):
       broker_info['ip'] = broker_info['broker_ip']
       broker_info['port'] = broker_info['broker_port']
       broker_info['queue'] = broker_info['broker_queue']
-   except config_err, error:
+   except ConfigError, error:
       print '%s' % error.msg
       print 'Attempting to retrieve config from %s' % conf_file
       try:
          broker_info = read_config_file(conf_file, 'Broker')
-      except config_err, error:
+      except ConfigError, error:
          print '%s' % error.msg
          print 'Exiting'
          return(FAILURE)

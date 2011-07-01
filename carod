@@ -94,7 +94,6 @@ class work_data(object):
 
 
    def __get_slot__(self):
-      self.__access_time__ = time.time()
       return(self.__slot__)
 
    slot = property(__get_slot__, __set_slot__)
@@ -127,8 +126,8 @@ class global_data(object):
 
 
    def add_work(self, key, AMQP_msg, slot):
-      """Add work information to list of known work items.  Raises an
-         AddDataError if the key already exists"""
+      """Add work information to list of known work items.  Raises a
+         MsgException if the key already exists"""
       work = work_data(AMQP_msg, slot)
       if self.__find_work__(key) == False:
          self.__work_list__.update({key:work})
@@ -279,9 +278,10 @@ def lease_monitor(data, max_lease_time, interval, log_name):
                # No other thread is accessing this item and the lease has
                # expired, so delete it from the list of known messages and
                # release the lock on the AMQP message
-               msg_id = item.AMQP_msg.get('message_properties').message_id
-               log(logging.DEBUG, log_name, '%s: Expiring %s' % (func_name, str(msg_id)))
-               data.remove_work(msg_id)
+               msg_id = str(item.AMQP_msg.get('message_properties').message_id)
+               log(logging.DEBUG, log_name, '%s: Expiring %s' % (func_name, msg_id))
+               if data.remove_work(msg_id) == None:
+                  log(logging.ERROR, log_name, '%s: Failed to expire %s' % (func_name, msg_id))
 
                # Release the message so it can be consumed by another process
                try:
@@ -371,20 +371,20 @@ def handle_get_work(req_socket, reply, amqp_queue, known_items, log_name):
       slot = slots[0].strip()
 
    log(logging.DEBUG, log_name, '%s: Checking if slot %s is doing work' % (func_name, str(slot)))
-   log(logging.DEBUG, log_name, '%s: Acquiring global message lock for slot check %s' % (func_name, str(slot)))
+   log(logging.DEBUG, log_name, '%s: Acquiring global message lock for slot %s check' % (func_name, str(slot)))
    known_items.lock()
-   log(logging.DEBUG, log_name, '%s: Acquired global message lock for slot check %s' % (func_name, str(slot)))
+   log(logging.DEBUG, log_name, '%s: Acquired global message lock for slot %s check' % (func_name, str(slot)))
    if known_items.slot_in_use(slot) == True:
       log(logging.DEBUG, log_name, '%s: slot %s is already doing work' % (func_name, str(slot)))
       reply.data = ''
       req_socket.send(pickle.dumps(reply, 2))
       close_socket(req_socket)
       known_items.unlock()
-      log(logging.DEBUG, log_name, '%s: Released global message lock for slot check %s' % (func_name, str(slot)))
+      log(logging.DEBUG, log_name, '%s: Released global message lock for slot %s check' % (func_name, str(slot)))
       return(SUCCESS)
    known_items.unlock()
    log(logging.DEBUG, log_name, '%s: slot %s is not doing work' % (func_name, str(slot)))
-   log(logging.DEBUG, log_name, '%s: Released global message lock for slot check %s' % (func_name, str(slot)))
+   log(logging.DEBUG, log_name, '%s: Released global message lock for slot %s check' % (func_name, str(slot)))
 
    # Get the work off the AMQP work queue if it exists
    try:
