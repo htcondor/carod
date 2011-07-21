@@ -919,10 +919,10 @@ def main(argv=None):
    try:
       # Configure the logging system
       try:
-         file = read_condor_config('CAROD', ['LOG'])
+         file = read_condor_config('CAROD', ['LOG'], permit_param_only = False)
       except ConfigError, error:
          try:
-            file = read_condor_config('LL_DAEMON', ['LOG'])
+            file = read_condor_config('LL_DAEMON', ['LOG'], permit_param_only = False)
          except:
             print 'Error: %s.  Exiting' % error.msg
             return(FAILURE)
@@ -992,14 +992,14 @@ def main(argv=None):
 
       log(logging.INFO, log_name, 'Starting up')
       try:
-         broker = read_condor_config('CAROD', ['BROKER_IP', 'BROKER_PORT', 'BROKER_QUEUE'])
+         broker = read_condor_config('CAROD', ['BROKER_IP', 'BROKER_PORT', 'BROKER_QUEUE'], permit_param_only = False)
          # Move values into legacy locations
          broker['ip'] = broker['broker_ip']
          broker['port'] = broker['broker_port']
          broker['queue'] = broker['broker_queue']
       except ConfigError, error:
          try:
-            broker = read_condor_config('LL_BROKER', ['IP', 'PORT', 'QUEUE'])
+            broker = read_condor_config('LL_BROKER', ['IP', 'PORT', 'QUEUE'], permit_param_only = False)
          except:
             log(logging.INFO, log_name, error.msg)
             log(logging.INFO, log_name, 'Attempting to retrieve config from %s' % conf_file)
@@ -1010,10 +1010,10 @@ def main(argv=None):
       broker['work_queue_name'] = dest
          
       try:
-         server = read_condor_config('CAROD', ['IP', 'PORT', 'QUEUED_CONNECTIONS', 'LEASE_TIME', 'LEASE_CHECK_INTERVAL'])
+         server = read_condor_config('CAROD', ['IP', 'PORT', 'QUEUED_CONNECTIONS', 'LEASE_TIME', 'LEASE_CHECK_INTERVAL'], permit_param_only = False)
       except ConfigError, error:
          try:
-            server = read_condor_config('LL_DAEMON', ['IP', 'PORT', 'QUEUED_CONNECTIONS', 'LEASE_TIME', 'LEASE_CHECK_INTERVAL'])
+            server = read_condor_config('LL_DAEMON', ['IP', 'PORT', 'QUEUED_CONNECTIONS', 'LEASE_TIME', 'LEASE_CHECK_INTERVAL'], permit_param_only = False)
          except:
             log(logging.INFO, log_name, *(error.msg))
             log(logging.INFO, log_name, 'Attempting to retrieve config from %s' % conf_file)
