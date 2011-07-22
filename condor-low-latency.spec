@@ -1,5 +1,5 @@
 %{!?is_fedora: %define is_fedora %(/bin/sh -c "if [ -e /etc/fedora-release ];then echo '1'; fi")}
-%define rel 1
+%define rel 2
 
 Summary: Low Latency Scheduling
 Name: condor-low-latency
@@ -14,7 +14,7 @@ BuildArch: noarch
 Requires: python >= 2.3
 Requires: condor >= 7.0.2-4
 Requires: condor-job-hooks
-Requires: python-condorutils >= 1.5
+Requires: python-condorutils >= 1.5-4
 Requires: python-qpid
 
 %description
@@ -54,6 +54,9 @@ rm -rf %{buildroot}
 %_sbindir/carod
 
 %changelog
+* Fri Jul 22 2011  <rrati@redhat> - 1.2-2
+- Updated python-condorutils dep
+
 * Fri Jul  1 2011  <rrati@redhat> - 1.2-1
 - Change config param names:
   LL_DAEMON -> CAROD
