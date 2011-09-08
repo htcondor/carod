@@ -14,16 +14,9 @@
 #   limitations under the License.
 
 #   TEST INFORMATION:
-#   This test will test that a job that depends on files external to the
-#   execute node are transfered to the syste, and that the result files
-#   are also transfered off the system.
-#
-#   When complete, there will be a test.zip and results.zip file in the
-#   directory the test was run from.  The test.zip is the uncompressed
-#   archive that is passed to the system as the data files, and the reults.zip
-#   is the uncompressed archive that contains the results.  The archives
-#   should be extracted to verify correct results.  The test relies on the
-#   test_run.sh script being in the directory where the test is run.
+#   This test will verify that a job that depends on files external to the
+#   execute node are transfered to the system, and that those files are
+#   readable even if the zip contains no permissions information.
 
 import qpid
 import time
@@ -44,6 +37,7 @@ def dump_queue(queue, ses, con, to, dest, broker):
    message = 0
    count = 0
    expected = 2
+   failure = False
 
    while True:
       try:
@@ -56,19 +50,21 @@ def dump_queue(queue, ses, con, to, dest, broker):
          print 'Headers:'
          for header in job_data.keys():
             print header + ': ' + str(job_data[header])
-#         print ''
-#         print 'Body: '
-#         print content
          print ''
-         if content != None and content != '':
-            file = open('results.zip', 'wb')
-            file.write(content)
-            file.close()
+         try:
+            if int(job_data['ExitCode']) == 0:
+               failure = False
+            else:
+               failure = True
+         except:
+            failure = True
       except Empty:
          if count < expected:
             print 'Only received %d messages but expected %d.  TEST FAILED!' % (count, expected)
+         elif failure:
+            print 'Job failed to run.  TEST FAILED!'
          else:
-            print 'Received %d messages.  Check the results.zip for verification of test.' % count
+            print 'Received %d messages.  TEST PASSED.' % count
          break
       except qpid.session.Closed:
          try:
@@ -169,10 +165,12 @@ def main(argv=None):
    archived_file.close()
 
    work_headers = {}
-   work_headers['Cmd'] = '"test_run.sh"'
+   work_headers['Cmd'] = '"/bin/cat"'
+   work_headers['Arguments'] = '"perms_text"'
+#   work_headers['Cmd'] = '"/bin/sleep"'
+#   work_headers['Arguments'] = '"60"'
    work_headers['Iwd'] = '"."'
    work_headers['Owner'] = '"nobody"'
-   work_headers['TransferOutput'] = '"output,output2,output3,/etc/shadow"'
    work_headers['JobUniverse'] = 5
    message_props = session.message_properties(application_headers=work_headers)
    message_props.reply_to = session.reply_to('amq.direct', replyTo)

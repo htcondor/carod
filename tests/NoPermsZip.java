@@ -5,9 +5,9 @@ public class NoPermsZip
    public static void main(String[] args) throws Exception
    {
       ZipOutputStream out = new ZipOutputStream(new FileOutputStream("no_perms.zip"));
-      FileInputStream in = new FileInputStream("./test_run.sh");
+      FileInputStream in = new FileInputStream("./perms_text");
       int abyte;
-      out.putNextEntry(new ZipEntry("./test_run.sh"));
+      out.putNextEntry(new ZipEntry("./perms_text"));
       try
       {
          while ((abyte = in.read()) != -1)
