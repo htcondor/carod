@@ -1,5 +1,5 @@
 %{!?is_fedora: %define is_fedora %(/bin/sh -c "if [ -e /etc/fedora-release ];then echo '1'; fi")}
-%define rel 2
+%define rel 3
 
 Summary: Low Latency Scheduling
 Name: condor-low-latency
@@ -54,6 +54,9 @@ rm -rf %{buildroot}
 %_sbindir/carod
 
 %changelog
+* Thu Nov  8 2012  <rrati@redhat> - 1.2-3
+- Updated for branding change to HTCondor
+
 * Fri Jul 22 2011  <rrati@redhat> - 1.2-2
 - Updated python-condorutils dep
 
