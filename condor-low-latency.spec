@@ -18,7 +18,7 @@ Requires: python-condorutils >= 1.5-4
 Requires: python-qpid
 
 %description
-Low Latency Scheduling provides a means for bypassing condor's normal
+Low Latency Scheduling provides a means for bypassing HTCondor's normal
 scheduling process and instead submit work directly to an execute node
 using the AMQP protocol.
 
